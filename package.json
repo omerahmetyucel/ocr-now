@@ -1,6 +1,6 @@
 {
   "name": "ocr-now",
-  "version": "1.4.1",
+  "version": "1.5.0",
   "type": "module",
   "bin": {
     "ocr-now": "./src/index.ts"
