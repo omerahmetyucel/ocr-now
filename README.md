@@ -36,7 +36,7 @@ ocr-now -v | --version                     # print version
 
 PDF pages are OCR'd in parallel (capped at 6 workers or your CPU core count, whichever is lower). Page order in the output file is preserved regardless of completion order.
 
-If a PDF has embedded text on every selected page (most digitally-generated PDFs do), `ocr-now` extracts it directly via `pdftotext` and skips OCR entirely. A 144-page text PDF goes from ~75s to <1s. Scanned PDFs still go through the OCR pipeline.
+If a PDF has embedded text on the selected pages, `ocr-now` extracts it directly via `pdftotext` and skips OCR for those pages. A 144-page fully text-embedded PDF goes from ~75s to <1s. Hybrid PDFs (e.g., a scanned page inserted into an otherwise digital doc) mix the two paths: text pages extracted directly, scanned pages OCR'd. Fully scanned PDFs go through the full OCR pipeline.
 
 ### Batch mode
 

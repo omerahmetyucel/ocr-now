@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { parsePages, planRasterTasks, validatePageRanges } from "../src/ocr";
+import {
+  pagesToRanges, parsePages, planRasterTasks, renderPages, validatePageRanges,
+} from "../src/ocr";
 
 describe("parsePages", () => {
   test("single page", () => {
@@ -57,6 +59,46 @@ describe("validatePageRanges", () => {
   });
   test("empty ranges pass trivially", () => {
     expect(() => validatePageRanges([], 10)).not.toThrow();
+  });
+});
+
+describe("pagesToRanges", () => {
+  test("empty input", () => {
+    expect(pagesToRanges([])).toEqual([]);
+  });
+  test("single page", () => {
+    expect(pagesToRanges([5])).toEqual([[5, 5]]);
+  });
+  test("contiguous block", () => {
+    expect(pagesToRanges([1, 2, 3])).toEqual([[1, 3]]);
+  });
+  test("non-contiguous singletons", () => {
+    expect(pagesToRanges([1, 3, 5])).toEqual([[1, 1], [3, 3], [5, 5]]);
+  });
+  test("mixed contiguous and singleton", () => {
+    expect(pagesToRanges([1, 2, 5, 6, 7, 10])).toEqual([[1, 2], [5, 7], [10, 10]]);
+  });
+  test("unsorted input is sorted", () => {
+    expect(pagesToRanges([5, 1, 2, 3])).toEqual([[1, 3], [5, 5]]);
+  });
+  test("duplicates are deduped", () => {
+    expect(pagesToRanges([1, 1, 2, 2])).toEqual([[1, 2]]);
+  });
+});
+
+describe("renderPages", () => {
+  test("renders pages in numeric order with headers", () => {
+    const out = renderPages([
+      { num: 2, text: "second" },
+      { num: 1, text: "first" },
+    ]);
+    expect(out).toBe("--- Page 1 ---\nfirst\n\n--- Page 2 ---\nsecond");
+  });
+  test("trims page text", () => {
+    expect(renderPages([{ num: 1, text: "  hello  \n\n" }])).toBe("--- Page 1 ---\nhello");
+  });
+  test("empty input → empty string", () => {
+    expect(renderPages([])).toBe("");
   });
 });
 
