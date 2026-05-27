@@ -37,6 +37,7 @@ function printUsage(toStdout = false) {
   out("  --copy              also copy result to clipboard (pbcopy)");
   out("  --stdout            write result to stdout instead of a file (for piping)");
   out("  --quiet             suppress progress output (errors still print)");
+  out("  --json              emit structured JSON (file, lang, per-page text) instead of plain text");
   out("  -h, --help          show this help");
   out("  -v, --version       print version");
   out("");
@@ -153,7 +154,8 @@ async function main() {
   const outFlag = flagStr(flags.out);
   const copy = Boolean(flags.copy);
 
-  const opts: RunOpts = { lang, dpi, pageRanges, outFlag, copy, stdout };
+  const json = flags.json === true;
+  const opts: RunOpts = { lang, dpi, pageRanges, outFlag, copy, stdout, json };
 
   if (cmd === "start") {
     await start(opts);

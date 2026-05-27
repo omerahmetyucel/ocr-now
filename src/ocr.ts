@@ -21,6 +21,7 @@ export type RunOpts = {
   outFlag?: string;
   copy: boolean;
   stdout: boolean;
+  json: boolean;
 };
 
 export function validatePageRanges(ranges: PageRange[], totalPages: number): void {
@@ -332,7 +333,7 @@ export async function processFile(
   path: string,
   label: string,
   opts: RunOpts,
-): Promise<{ text: string; pages: number; kind: "pdf" | "img"; lang: string }> {
+): Promise<{ text: string; pages: number; kind: "pdf" | "img"; lang: string; pageTexts: PageText[] }> {
   const kind = classify(path);
   if (!kind) throw new Error(`unsupported file type: ${path}`);
   const size = fmtBytes((await stat(path)).size);
@@ -354,7 +355,7 @@ export async function processFile(
         const text = renderPages(result.extracted);
         const lang = opts.lang === AUTO ? await detectFromSample(text) : opts.lang;
         logDone(label, lang, result.totalSelected, text.length, t0);
-        return { text, pages: result.totalSelected, kind, lang };
+        return { text, pages: result.totalSelected, kind, lang, pageTexts: result.extracted };
       }
       // Hybrid: text on some pages, scans on others. Use extracted text for
       // auto-detection (no extra OCR pass needed) and OCR only the scanned pages.
@@ -362,9 +363,10 @@ export async function processFile(
       const sampleText = result.extracted.map(p => p.text).join("\n");
       const lang = opts.lang === AUTO ? await detectFromSample(sampleText) : opts.lang;
       const ocrResult = await ocrPdf(path, lang, opts.dpi, pagesToRanges(result.needsOcr));
-      const text = renderPages([...result.extracted, ...ocrResult.pages]);
+      const merged = [...result.extracted, ...ocrResult.pages];
+      const text = renderPages(merged);
       logDone(label, lang, result.totalSelected, text.length, t0);
-      return { text, pages: result.totalSelected, kind, lang };
+      return { text, pages: result.totalSelected, kind, lang, pageTexts: merged };
     }
   }
 
@@ -372,8 +374,10 @@ export async function processFile(
 
   let text: string;
   let pages = 1;
+  let pageTexts: PageText[];
   if (kind === "pdf") {
     const r = await ocrPdf(path, lang, opts.dpi, opts.pageRanges);
+    pageTexts = r.pages;
     text = renderPages(r.pages);
     pages = r.pages.length;
   } else {
@@ -384,7 +388,8 @@ export async function processFile(
     } finally {
       stop();
     }
+    pageTexts = [{ num: 1, text }];
   }
   logDone(label, lang, pages, text.length, t0);
-  return { text, pages, kind, lang };
+  return { text, pages, kind, lang, pageTexts };
 }

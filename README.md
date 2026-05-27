@@ -81,6 +81,7 @@ Filenames with spaces or special chars: quote them, or use tab completion.
 | `--copy` | Also copy result to clipboard. macOS only (uses `pbcopy`) |
 | `--stdout` | Write result to stdout instead of a file. Status logs go to stderr so output pipes cleanly: `ocr-now foo.pdf --stdout \| grep keyword` |
 | `--quiet` | Suppress progress, spinner, and the final "wrote" line. Errors still print to stderr |
+| `--json` | Emit structured JSON instead of the plain-text section format. Output file extension switches to `.json`. Pipes cleanly: `ocr-now foo.pdf --json --stdout \| jq .pages[0]` |
 
 All stackable. Example:
 

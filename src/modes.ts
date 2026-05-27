@@ -1,6 +1,6 @@
 import { mkdir, readdir, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, join, resolve } from "node:path";
-import { processFile, type RunOpts } from "./ocr";
+import { type PageText, processFile, type RunOpts } from "./ocr";
 import { copyToClipboard } from "./shell";
 import { AUTO, CONCURRENCY, PROJECT_ROOT, classify, fmtBytes } from "./util";
 
@@ -47,7 +47,8 @@ export async function start(opts: RunOpts) {
   console.log(engineLine(opts));
   console.log(`input  ${inputDir}  (${entries.length} entr${entries.length === 1 ? "y" : "ies"})`);
 
-  const sections: string[] = [];
+  type Result = { file: string; name: string; lang: string; pages: number; text: string; pageTexts: PageText[] };
+  const results: Result[] = [];
   let totalPages = 0;
   const runStart = performance.now();
 
@@ -57,17 +58,25 @@ export async function start(opts: RunOpts) {
       console.log(`skip   ${name} (unsupported)`);
       continue;
     }
-    const { text, pages, lang } = await processFile(full, name, opts);
-    totalPages += pages;
-    sections.push(`========== ${name} [${lang.toUpperCase()}] ==========\n${text.trim()}\n`);
+    const r = await processFile(full, name, opts);
+    totalPages += r.pages;
+    results.push({ file: full, name, lang: r.lang, pages: r.pages, text: r.text, pageTexts: r.pageTexts });
   }
 
-  if (sections.length === 0) {
+  if (results.length === 0) {
     console.error("Nothing to OCR.");
     process.exit(1);
   }
 
-  const body = sections.join("\n");
+  const body = opts.json
+    ? JSON.stringify(
+        results.map(r => ({ file: r.file, lang: r.lang, pages: r.pageTexts })),
+        null,
+        2,
+      )
+    : results
+        .map(r => `========== ${r.name} [${r.lang.toUpperCase()}] ==========\n${r.text.trim()}\n`)
+        .join("\n");
   const totalDt = ((performance.now() - runStart) / 1000).toFixed(1);
 
   if (opts.stdout) {
@@ -76,7 +85,8 @@ export async function start(opts: RunOpts) {
   } else {
     const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
     const filenameLang = opts.lang === AUTO ? "AUTO" : opts.lang.toUpperCase();
-    const defaultPath = join(outputDir, `ocr-now ${filenameLang} ${stamp}.txt`);
+    const ext = opts.json ? "json" : "txt";
+    const defaultPath = join(outputDir, `ocr-now ${filenameLang} ${stamp}.${ext}`);
     const outPath = await resolveOutPath(opts.outFlag, defaultPath);
     await writeFile(outPath, body);
     console.log(`wrote  ${outPath}  (${fmtBytes(body.length)}, ${totalPages} page${totalPages === 1 ? "" : "s"}, ${totalDt}s total)`);
@@ -104,22 +114,27 @@ export async function single(arg: string, opts: RunOpts) {
 
   const runStart = performance.now();
   const name = basename(path);
-  const { text, pages, lang } = await processFile(path, name, opts);
+  const { text, pages, lang, pageTexts } = await processFile(path, name, opts);
   const totalDt = ((performance.now() - runStart) / 1000).toFixed(1);
 
+  const body = opts.json
+    ? JSON.stringify({ file: path, lang, pages: pageTexts }, null, 2)
+    : text;
+
   if (opts.stdout) {
-    process.stdout.write(text);
-    console.log(`done   ${fmtBytes(text.length)}, ${pages} page${pages === 1 ? "" : "s"}, ${totalDt}s total (→ stdout)`);
+    process.stdout.write(body);
+    console.log(`done   ${fmtBytes(body.length)}, ${pages} page${pages === 1 ? "" : "s"}, ${totalDt}s total (→ stdout)`);
   } else {
     const stem = name.slice(0, name.length - extname(name).length);
-    const defaultPath = join(dirname(path), `ocr-now ${lang.toUpperCase()} ${stem}.txt`);
+    const ext = opts.json ? "json" : "txt";
+    const defaultPath = join(dirname(path), `ocr-now ${lang.toUpperCase()} ${stem}.${ext}`);
     const outPath = await resolveOutPath(opts.outFlag, defaultPath);
-    await writeFile(outPath, text);
-    console.log(`wrote  ${outPath}  (${fmtBytes(text.length)}, ${pages} page${pages === 1 ? "" : "s"}, ${totalDt}s total)`);
+    await writeFile(outPath, body);
+    console.log(`wrote  ${outPath}  (${fmtBytes(body.length)}, ${pages} page${pages === 1 ? "" : "s"}, ${totalDt}s total)`);
   }
 
   if (opts.copy) {
-    await copyToClipboard(text);
-    console.log(`copied to clipboard (${text.length} chars)`);
+    await copyToClipboard(body);
+    console.log(`copied to clipboard (${body.length} chars)`);
   }
 }
