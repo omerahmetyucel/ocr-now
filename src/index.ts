@@ -3,12 +3,23 @@ import pkg from "../package.json" with { type: "json" };
 import { KNOWN_COMMANDS, flagStr, looksLikePath, parseArgs, suggestCommand } from "./args";
 import {
   type Config, VALID_CONFIG_KEYS, isValidKey,
-  loadConfig, resolveDpi, saveConfig, validateDpi,
+  loadConfig, resolveDpi, saveConfig,
+  validateConfidence, validateDpi, validateSampleChars,
 } from "./config";
 import { listInstalledLangs, resolveLang, validateLang } from "./lang";
 import { single, start } from "./modes";
 import { parsePages, type RunOpts } from "./ocr";
-import { AUTO, CONFIG_PATH, HARDCODED_DEFAULT_DPI, HARDCODED_DEFAULT_LANG } from "./util";
+import {
+  AUTO, AUTO_MIN_CONFIDENCE, AUTO_MIN_SAMPLE_CHARS,
+  CONFIG_PATH, HARDCODED_DEFAULT_DPI, HARDCODED_DEFAULT_LANG,
+} from "./util";
+
+const CONFIG_DEFAULTS: Record<string, string | number> = {
+  defaultLang: HARDCODED_DEFAULT_LANG,
+  defaultDpi: HARDCODED_DEFAULT_DPI,
+  autoMinConfidence: AUTO_MIN_CONFIDENCE,
+  autoMinSampleChars: AUTO_MIN_SAMPLE_CHARS,
+};
 
 function printUsage(toStdout = false) {
   const out = toStdout ? console.log : console.error;
@@ -41,10 +52,11 @@ async function configCommand(args: string[]): Promise<void> {
 
   if (sub === "list") {
     console.log(`config file: ${CONFIG_PATH}`);
-    const langSet = cfg.defaultLang !== undefined;
-    const dpiSet = cfg.defaultDpi !== undefined;
-    console.log(`  defaultLang = ${cfg.defaultLang ?? HARDCODED_DEFAULT_LANG}${langSet ? "" : "  (default)"}`);
-    console.log(`  defaultDpi  = ${cfg.defaultDpi ?? HARDCODED_DEFAULT_DPI}${dpiSet ? "" : "  (default)"}`);
+    for (const key of VALID_CONFIG_KEYS) {
+      const isSet = cfg[key] !== undefined;
+      const padded = key.padEnd(18);
+      console.log(`  ${padded} = ${cfg[key] ?? CONFIG_DEFAULTS[key]}${isSet ? "" : "  (default)"}`);
+    }
     return;
   }
 
@@ -52,8 +64,7 @@ async function configCommand(args: string[]): Promise<void> {
     const key = args[1];
     if (!key) throw new Error(`Usage: ocr-now config get <key>`);
     if (!isValidKey(key)) throw new Error(`unknown key "${key}". Valid: ${VALID_CONFIG_KEYS.join(", ")}`);
-    const val = cfg[key] ?? (key === "defaultLang" ? HARDCODED_DEFAULT_LANG : HARDCODED_DEFAULT_DPI);
-    console.log(String(val));
+    console.log(String(cfg[key] ?? CONFIG_DEFAULTS[key]));
     return;
   }
 
@@ -65,14 +76,15 @@ async function configCommand(args: string[]): Promise<void> {
     if (key === "defaultLang") {
       const normalized = value.trim() === AUTO ? AUTO : await validateLang(value);
       cfg.defaultLang = normalized;
-      await saveConfig(cfg);
-      console.log(`set defaultLang = ${normalized}`);
-    } else {
-      const n = validateDpi(value);
-      cfg.defaultDpi = n;
-      await saveConfig(cfg);
-      console.log(`set defaultDpi = ${n}`);
+    } else if (key === "defaultDpi") {
+      cfg.defaultDpi = validateDpi(value);
+    } else if (key === "autoMinConfidence") {
+      cfg.autoMinConfidence = validateConfidence(value);
+    } else if (key === "autoMinSampleChars") {
+      cfg.autoMinSampleChars = validateSampleChars(value);
     }
+    await saveConfig(cfg);
+    console.log(`set ${key} = ${cfg[key]}`);
     return;
   }
 

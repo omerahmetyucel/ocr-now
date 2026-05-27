@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { VALID_CONFIG_KEYS, isValidKey, validateDpi } from "../src/config";
+import {
+  VALID_CONFIG_KEYS, isValidKey,
+  validateConfidence, validateDpi, validateSampleChars,
+} from "../src/config";
 
 describe("isValidKey", () => {
   test("valid keys", () => {
@@ -36,6 +39,47 @@ describe("validateDpi", () => {
   });
 });
 
+describe("validateConfidence", () => {
+  test("valid decimal", () => {
+    expect(validateConfidence("0.2")).toBe(0.2);
+    expect(validateConfidence(0.5)).toBe(0.5);
+  });
+  test("boundary values", () => {
+    expect(validateConfidence("0")).toBe(0);
+    expect(validateConfidence("1")).toBe(1);
+  });
+  test("below 0", () => {
+    expect(() => validateConfidence("-0.1")).toThrow(/between 0 and 1/);
+  });
+  test("above 1", () => {
+    expect(() => validateConfidence("1.5")).toThrow(/between 0 and 1/);
+  });
+  test("non-numeric", () => {
+    expect(() => validateConfidence("abc")).toThrow(/must be a number/);
+  });
+});
+
+describe("validateSampleChars", () => {
+  test("valid positive integer", () => {
+    expect(validateSampleChars("20")).toBe(20);
+    expect(validateSampleChars(50)).toBe(50);
+  });
+  test("below 1", () => {
+    expect(() => validateSampleChars("0")).toThrow(/>= 1/);
+  });
+  test("decimal rejected", () => {
+    expect(() => validateSampleChars(20.5)).toThrow(/integer/);
+  });
+  test("non-numeric", () => {
+    expect(() => validateSampleChars("abc")).toThrow(/integer/);
+  });
+});
+
 test("VALID_CONFIG_KEYS matches expected set", () => {
-  expect([...VALID_CONFIG_KEYS]).toEqual(["defaultLang", "defaultDpi"]);
+  expect([...VALID_CONFIG_KEYS]).toEqual([
+    "defaultLang",
+    "defaultDpi",
+    "autoMinConfidence",
+    "autoMinSampleChars",
+  ]);
 });

@@ -88,9 +88,16 @@ ocr-now config set defaultDpi 400
 ocr-now config unset defaultDpi
 ```
 
-Valid keys: `defaultLang`, `defaultDpi`.
+Valid keys:
 
-Resolution order for each setting: flag → config → built-in default (`tur`, `300`).
+| Key | Default | Notes |
+|---|---|---|
+| `defaultLang` | `tur` | Tesseract code, multi-language with `+`, or `auto` |
+| `defaultDpi` | `300` | Integer in `72..600` |
+| `autoMinConfidence` | `0.2` | Min franc score to accept the detected language; below this, fall back to the baseline |
+| `autoMinSampleChars` | `20` | Min sample-text length before franc is consulted at all |
+
+Resolution order: flag → config → built-in default.
 
 `defaultLang` accepts `auto` as a special value. See below.
 

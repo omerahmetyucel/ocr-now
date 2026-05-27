@@ -2,6 +2,7 @@ import { mkdtemp, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { francAll } from "franc-min";
+import { loadConfig } from "./config";
 import { listInstalledLangs, pickAutoBaseline } from "./lang";
 import { run, runPool } from "./shell";
 import { isTty, renderBar, startSpinner } from "./tty";
@@ -142,8 +143,11 @@ async function ocrPdf(
 
 async function detectFromSample(sample: string): Promise<string> {
   const baseline = await pickAutoBaseline();
+  const cfg = await loadConfig();
+  const minSampleChars = cfg.autoMinSampleChars ?? AUTO_MIN_SAMPLE_CHARS;
+  const minConfidence = cfg.autoMinConfidence ?? AUTO_MIN_CONFIDENCE;
   const cleaned = sample.trim();
-  if (cleaned.length < AUTO_MIN_SAMPLE_CHARS) {
+  if (cleaned.length < minSampleChars) {
     console.log(`auto   sample too short (${cleaned.length} chars), falling back to ${baseline}`);
     return baseline;
   }
@@ -156,8 +160,8 @@ async function detectFromSample(sample: string): Promise<string> {
     return baseline;
   }
   const [primary, secondary] = ranked;
-  if (primary[1] < AUTO_MIN_CONFIDENCE) {
-    console.log(`auto   top match ${primary[0]} ${primary[1].toFixed(2)} below threshold ${AUTO_MIN_CONFIDENCE}, falling back to ${baseline}`);
+  if (primary[1] < minConfidence) {
+    console.log(`auto   top match ${primary[0]} ${primary[1].toFixed(2)} below threshold ${minConfidence}, falling back to ${baseline}`);
     return baseline;
   }
   const tail = secondary ? `  (runner-up: ${secondary[0]} ${secondary[1].toFixed(2)})` : "";
