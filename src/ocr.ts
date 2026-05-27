@@ -60,7 +60,7 @@ async function getPdfPageCount(path: string): Promise<number> {
 }
 
 // Split ranges into chunks of ~equal page count, never crossing a range boundary.
-function planRasterTasks(ranges: PageRange[], workers: number): PageRange[] {
+export function planRasterTasks(ranges: PageRange[], workers: number): PageRange[] {
   const total = ranges.reduce((acc, [a, b]) => acc + (b - a + 1), 0);
   if (total === 0) return [];
   const chunkSize = Math.max(1, Math.ceil(total / workers));

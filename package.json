@@ -6,7 +6,8 @@
     "ocr-now": "./src/index.ts"
   },
   "scripts": {
-    "start": "bun src/index.ts start"
+    "start": "bun src/index.ts start",
+    "test": "bun test"
   },
   "dependencies": {
     "franc-min": "^6.2.0"
