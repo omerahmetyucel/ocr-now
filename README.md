@@ -130,6 +130,18 @@ The `[LANG]` suffix in the section header shows the language actually used for t
 
 Single-file mode skips the `========` header (single source).
 
+## Third-party tools
+
+`ocr-now` is a thin wrapper. The actual work is done by:
+
+| Tool | License | Link |
+|---|---|---|
+| [Tesseract](https://github.com/tesseract-ocr/tesseract) | Apache 2.0 | invoked as a subprocess |
+| [Poppler](https://poppler.freedesktop.org/) (`pdftoppm`, `pdfinfo`, `pdftotext`) | GPL | invoked as a subprocess |
+| [franc-min](https://github.com/wooorm/franc) | MIT | npm dependency |
+
+Subprocess invocation is arm's-length communication — `ocr-now`'s MIT license is not affected by Poppler's GPL. Users install Poppler and Tesseract themselves via Homebrew; this project does not redistribute either.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
