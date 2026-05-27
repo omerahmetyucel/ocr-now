@@ -15,7 +15,9 @@ brew install tesseract tesseract-lang poppler
 ## Install
 
 ```
-git clone <repo> ocr-now && cd ocr-now
+git clone https://github.com/jericho909/ocr-now.git
+cd ocr-now
+bun install
 bun link
 ```
 
@@ -61,8 +63,8 @@ Filenames with spaces or special chars: quote them, or use tab completion.
 | `--lang=xxx` | Tesseract lang code. Multi-language with `+`: `--lang=tur+eng`. Use `auto` to detect |
 | `--dpi=N` | Rasterize PDFs at N dpi. Range 72–600. Default 300 |
 | `--pages=1-3,7` | PDF only. OCR a subset of pages. Non-contiguous allowed |
-| `--out=<path>` | Override output. Directory or file path |
-| `--copy` | Also copy result to clipboard (`pbcopy`) |
+| `--out=<path>` | Override output. Treated as a directory if it ends in `/` or already exists as one; otherwise as a file path |
+| `--copy` | Also copy result to clipboard. macOS only (uses `pbcopy`) |
 
 All stackable. Example:
 
