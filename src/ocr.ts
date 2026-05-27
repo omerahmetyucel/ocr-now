@@ -92,6 +92,29 @@ async function getPdfPageCount(path: string): Promise<number> {
   return parseInt(m[1], 10);
 }
 
+// pdfimages -list emits a header line, a dashes line, then one row per
+// embedded raster image of the form "<page> <num> <type> ...". We pull
+// the page numbers out so callers can distinguish a "short text" page
+// from a genuinely scanned page.
+export function parsePdfimagesOutput(stdout: string): Set<number> {
+  const pages = new Set<number>();
+  for (const line of stdout.split("\n")) {
+    const m = /^\s*(\d+)\s+\d+/.exec(line);
+    if (m) pages.add(parseInt(m[1], 10));
+  }
+  return pages;
+}
+
+async function pagesWithImages(path: string): Promise<Set<number> | null> {
+  try {
+    const { stdout, exitCode } = await run(["pdfimages", "-list", path]);
+    if (exitCode !== 0) return null;
+    return parsePdfimagesOutput(stdout);
+  } catch {
+    return null;
+  }
+}
+
 // Split ranges into chunks of ~equal page count, never crossing a range boundary.
 export function planRasterTasks(ranges: PageRange[], workers: number): PageRange[] {
   const total = ranges.reduce((acc, [a, b]) => acc + (b - a + 1), 0);
@@ -262,10 +285,23 @@ async function tryExtractText(
 
   const MIN_CHARS_PER_PAGE = 50;
   const extracted: PageText[] = [];
-  const needsOcr: number[] = [];
+  const ambiguous: PageText[] = [];
   for (const p of selected) {
     if (p.text.trim().length >= MIN_CHARS_PER_PAGE) extracted.push(p);
-    else needsOcr.push(p.num);
+    else ambiguous.push(p);
+  }
+
+  // Pages that returned <50 chars could be genuine scans OR legitimately
+  // short digital pages (continuation pages, section dividers). Use
+  // pdfimages to see whether the page actually contains a raster image —
+  // if not, trust pdftotext's output regardless of length.
+  const needsOcr: number[] = [];
+  if (ambiguous.length > 0) {
+    const imagePages = await pagesWithImages(path);
+    for (const p of ambiguous) {
+      if (imagePages === null || imagePages.has(p.num)) needsOcr.push(p.num);
+      else extracted.push(p);
+    }
   }
 
   return {

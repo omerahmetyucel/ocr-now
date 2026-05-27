@@ -5,6 +5,7 @@ const INSTALL_HINTS: Record<string, string> = {
   pdftoppm: "brew install poppler",
   pdfinfo: "brew install poppler",
   pdftotext: "brew install poppler",
+  pdfimages: "brew install poppler",
   pbcopy: "pbcopy ships with macOS; --copy is macOS-only",
 };
 

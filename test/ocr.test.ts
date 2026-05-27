@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
-  pagesToRanges, parsePages, planRasterTasks, renderPages, validatePageRanges,
+  pagesToRanges, parsePages, parsePdfimagesOutput,
+  planRasterTasks, renderPages, validatePageRanges,
 } from "../src/ocr";
 
 describe("parsePages", () => {
@@ -83,6 +84,34 @@ describe("pagesToRanges", () => {
   });
   test("duplicates are deduped", () => {
     expect(pagesToRanges([1, 1, 2, 2])).toEqual([[1, 2]]);
+  });
+});
+
+describe("parsePdfimagesOutput", () => {
+  const header = "page   num  type   width height color comp bpc  enc interp  object ID x-ppi y-ppi size ratio\n" +
+    "--------------------------------------------------------------------------------------------\n";
+  test("empty output → empty set", () => {
+    expect(parsePdfimagesOutput("")).toEqual(new Set());
+  });
+  test("header only → empty set", () => {
+    expect(parsePdfimagesOutput(header)).toEqual(new Set());
+  });
+  test("single image on page 1", () => {
+    const out = header + "   1     0 image    640   480  rgb     3   8  jpeg   no       12  0   72   72  100K  10%\n";
+    expect(parsePdfimagesOutput(out)).toEqual(new Set([1]));
+  });
+  test("multiple images on same page deduped", () => {
+    const out = header +
+      "   3     0 image    640   480  rgb     3   8  jpeg   no       12  0   72   72  100K  10%\n" +
+      "   3     1 image    100   100  rgb     3   8  jpeg   no       15  0   72   72   10K   5%\n";
+    expect(parsePdfimagesOutput(out)).toEqual(new Set([3]));
+  });
+  test("multiple pages with images", () => {
+    const out = header +
+      "   1     0 image    640   480  rgb     3   8  jpeg   no       12  0   72   72  100K  10%\n" +
+      "   3     0 image    800   600  rgb     3   8  jpeg   no       20  0   72   72  150K  12%\n" +
+      "  16     0 image   1200   900  rgb     3   8  jpeg   no       42  0   72   72  300K  15%\n";
+    expect(parsePdfimagesOutput(out)).toEqual(new Set([1, 3, 16]));
   });
 });
 
