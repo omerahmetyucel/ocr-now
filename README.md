@@ -140,7 +140,6 @@ Single-file mode skips the `========` header (single source).
 | [Poppler](https://poppler.freedesktop.org/) (`pdftoppm`, `pdfinfo`, `pdftotext`) | GPL | invoked as a subprocess |
 | [franc-min](https://github.com/wooorm/franc) | MIT | npm dependency |
 
-Subprocess invocation is arm's-length communication — `ocr-now`'s MIT license is not affected by Poppler's GPL. Users install Poppler and Tesseract themselves via Homebrew; this project does not redistribute either.
 
 ## License
 
