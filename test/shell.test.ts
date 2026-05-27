@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { runPool } from "../src/shell";
+import { run, runPool } from "../src/shell";
+
+describe("run", () => {
+  test("missing binary throws a 'not found on PATH' error", async () => {
+    await expect(run(["this-binary-definitely-does-not-exist-xyz"])).rejects.toThrow(/not found on PATH/);
+  });
+});
 
 describe("runPool", () => {
   test("preserves input order even when completions are out of order", async () => {

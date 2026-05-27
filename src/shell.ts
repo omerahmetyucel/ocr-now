@@ -1,13 +1,41 @@
 export type RunResult = { stdout: string; stderr: string; exitCode: number };
 
+const INSTALL_HINTS: Record<string, string> = {
+  tesseract: "brew install tesseract tesseract-lang",
+  pdftoppm: "brew install poppler",
+  pdfinfo: "brew install poppler",
+  pdftotext: "brew install poppler",
+  pbcopy: "pbcopy ships with macOS; --copy is macOS-only",
+};
+
+function isNotFoundError(e: unknown): boolean {
+  const code = (e as { code?: string })?.code;
+  if (code === "ENOENT") return true;
+  const msg = (e as { message?: string })?.message ?? String(e);
+  return /not found|no such file|executable file not found/i.test(msg);
+}
+
 export async function run(cmd: string[]): Promise<RunResult> {
-  const proc = Bun.spawn(cmd, { stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-  ]);
-  const exitCode = await proc.exited;
-  return { stdout, stderr, exitCode };
+  try {
+    const proc = Bun.spawn(cmd, { stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+    ]);
+    const exitCode = await proc.exited;
+    return { stdout, stderr, exitCode };
+  } catch (e) {
+    if (isNotFoundError(e)) {
+      const bin = cmd[0];
+      const hint = INSTALL_HINTS[bin];
+      throw new Error(
+        hint
+          ? `${bin} not found on PATH. ${hint.startsWith("pbcopy") ? hint : `Install with: ${hint}`}`
+          : `${bin} not found on PATH`,
+      );
+    }
+    throw e;
+  }
 }
 
 export async function runPool<T, R>(

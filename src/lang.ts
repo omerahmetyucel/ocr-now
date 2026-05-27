@@ -3,12 +3,7 @@ import { run } from "./shell";
 import { AUTO, HARDCODED_DEFAULT_LANG } from "./util";
 
 export async function listInstalledLangs(): Promise<string[]> {
-  let res;
-  try {
-    res = await run(["tesseract", "--list-langs"]);
-  } catch {
-    throw new Error(`tesseract not found on PATH. Install with: brew install tesseract tesseract-lang`);
-  }
+  const res = await run(["tesseract", "--list-langs"]);
   if (res.exitCode !== 0) {
     throw new Error(`tesseract --list-langs failed: ${res.stderr.trim() || res.stdout.trim()}`);
   }
