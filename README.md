@@ -37,7 +37,7 @@ Drop PDFs/images into `input/`, then:
 ocr-now start
 ```
 
-Writes one combined file to `output/ocr-now <LANG> <timestamp>.txt`.
+Writes one combined file to `output/ocr-now <LANG> <timestamp>.txt`. The `input/` and `output/` folders are created automatically on first run.
 
 ### Single-file mode
 
@@ -101,3 +101,7 @@ One file per run. Each source file gets a section:
 ```
 
 Single-file mode skips the `========` header (single source).
+
+## License
+
+MIT. See [LICENSE](LICENSE).
