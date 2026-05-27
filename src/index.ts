@@ -2,11 +2,21 @@
 import { readdir, mkdir, writeFile, rm, mkdtemp, stat, readFile } from "node:fs/promises";
 import { join, extname, dirname, basename, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { francAll } from "franc-min";
 
+const AUTO = "auto";
 const HARDCODED_DEFAULT_LANG = "tur";
 const HARDCODED_DEFAULT_DPI = 300;
 const DPI_MIN = 72;
 const DPI_MAX = 600;
+const AUTO_DETECTION_DPI = "150";
+const AUTO_MIN_SAMPLE_CHARS = 20;
+// ISO 639-3 (franc) → Tesseract code, only for entries that aren't identity.
+const FRANC_TO_TESS: Record<string, string> = {
+  cmn: "chi_sim",
+  yue: "chi_tra",
+  zho: "chi_sim",
+};
 const IMAGE_EXTS = new Set([
   ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp", ".gif",
 ]);
@@ -128,8 +138,68 @@ async function validateLang(lang: string): Promise<string> {
 
 async function resolveLang(override: string | undefined): Promise<string> {
   const lang = (override?.trim()) || (await loadConfig()).defaultLang || HARDCODED_DEFAULT_LANG;
+  if (lang === AUTO) return AUTO; // validated at detection time
   await validateLang(lang);
   return lang;
+}
+
+async function pickAutoBaseline(): Promise<string> {
+  const installed = await listInstalledLangs();
+  if (installed.includes("eng")) return "eng";
+  const cfg = await loadConfig();
+  if (cfg.defaultLang && cfg.defaultLang !== AUTO && installed.includes(cfg.defaultLang)) {
+    return cfg.defaultLang;
+  }
+  if (installed.length === 0) throw new Error(`no tesseract languages installed`);
+  return installed.sort()[0];
+}
+
+async function detectLang(
+  path: string,
+  kind: "pdf" | "img",
+): Promise<string> {
+  const baseline = await pickAutoBaseline();
+  console.log(`auto   sampling ${kind === "pdf" ? "first page" : "image"} (${AUTO_DETECTION_DPI} dpi, ${baseline} baseline)`);
+
+  let sampleText: string;
+  if (kind === "img") {
+    sampleText = await ocrImage(path, baseline);
+  } else {
+    const tmp = await mkdtemp(join(tmpdir(), "ocr-now-auto-"));
+    try {
+      const { exitCode, stderr } = await run([
+        "pdftoppm", "-r", AUTO_DETECTION_DPI, "-png", "-f", "1", "-l", "1",
+        path, join(tmp, "page"),
+      ]);
+      if (exitCode !== 0) throw new Error(`pdftoppm failed during auto-detect: ${stderr.trim()}`);
+      const pngs = (await readdir(tmp)).filter(f => f.endsWith(".png")).sort();
+      if (pngs.length === 0) throw new Error(`pdftoppm produced no pages for auto-detect`);
+      sampleText = await ocrImage(join(tmp, pngs[0]), baseline);
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
+  }
+
+  const cleaned = sampleText.trim();
+  if (cleaned.length < AUTO_MIN_SAMPLE_CHARS) {
+    console.log(`auto   sample too short (${cleaned.length} chars), falling back to ${baseline}`);
+    return baseline;
+  }
+
+  const installed = new Set(await listInstalledLangs());
+  const ranked = francAll(cleaned)
+    .map(([code, score]) => [FRANC_TO_TESS[code] ?? code, score] as [string, number])
+    .filter(([code, score]) => installed.has(code) && score > 0);
+
+  if (ranked.length === 0) {
+    console.log(`auto   no installed language matched detection, falling back to ${baseline}`);
+    return baseline;
+  }
+
+  const [primary, secondary] = ranked;
+  const tail = secondary ? `  (runner-up: ${secondary[0]} ${secondary[1].toFixed(2)})` : "";
+  console.log(`auto   detected: ${primary[0]} ${primary[1].toFixed(2)}${tail} → --lang=${primary[0]}`);
+  return primary[0];
 }
 
 // ---------- dpi ----------
@@ -261,30 +331,33 @@ async function processFile(
   path: string,
   label: string,
   opts: RunOpts,
-): Promise<{ text: string; pages: number; kind: "pdf" | "img" }> {
+): Promise<{ text: string; pages: number; kind: "pdf" | "img"; lang: string }> {
   const kind = classify(path);
   if (!kind) throw new Error(`unsupported file type: ${path}`);
   const size = fmtBytes((await stat(path)).size);
   console.log(`ocr    ${label}  [${kind}, ${size}]`);
   const t0 = performance.now();
+
+  const lang = opts.lang === AUTO ? await detectLang(path, kind) : opts.lang;
+
   let text: string;
   let pages = 1;
   if (kind === "pdf") {
-    const r = await ocrPdf(path, opts.lang, opts.dpi, opts.pageRanges);
+    const r = await ocrPdf(path, lang, opts.dpi, opts.pageRanges);
     text = r.text;
     pages = r.pages;
   } else {
     if (opts.pageRanges) console.log(`       (--pages ignored for image input)`);
     const stop = startSpinner("ocr");
     try {
-      text = await ocrImage(path, opts.lang);
+      text = await ocrImage(path, lang);
     } finally {
       stop();
     }
   }
   const dt = ((performance.now() - t0) / 1000).toFixed(1);
-  console.log(`done   ${label}  pages=${pages}  chars=${text.length}  took=${dt}s`);
-  return { text, pages, kind };
+  console.log(`done   ${label}  lang=${lang}  pages=${pages}  chars=${text.length}  took=${dt}s`);
+  return { text, pages, kind, lang };
 }
 
 // ---------- output / clipboard ----------
@@ -343,9 +416,9 @@ async function start(opts: RunOpts) {
       console.log(`skip   ${name} (unsupported)`);
       continue;
     }
-    const { text, pages } = await processFile(full, name, opts);
+    const { text, pages, lang } = await processFile(full, name, opts);
     totalPages += pages;
-    sections.push(`========== ${name} ==========\n${text.trim()}\n`);
+    sections.push(`========== ${name} [${lang.toUpperCase()}] ==========\n${text.trim()}\n`);
   }
 
   if (sections.length === 0) {
@@ -354,7 +427,8 @@ async function start(opts: RunOpts) {
   }
 
   const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-  const defaultPath = join(outputDir, `ocr-now ${opts.lang.toUpperCase()} ${stamp}.txt`);
+  const filenameLang = opts.lang === AUTO ? "AUTO" : opts.lang.toUpperCase();
+  const defaultPath = join(outputDir, `ocr-now ${filenameLang} ${stamp}.txt`);
   const outPath = await resolveOutPath(opts.outFlag, defaultPath);
   const body = sections.join("\n");
   await writeFile(outPath, body);
@@ -383,9 +457,9 @@ async function single(arg: string, opts: RunOpts) {
 
   const runStart = performance.now();
   const name = basename(path);
-  const { text, pages } = await processFile(path, name, opts);
+  const { text, pages, lang } = await processFile(path, name, opts);
   const stem = name.slice(0, name.length - extname(name).length);
-  const defaultPath = join(dirname(path), `ocr-now ${opts.lang.toUpperCase()} ${stem}.txt`);
+  const defaultPath = join(dirname(path), `ocr-now ${lang.toUpperCase()} ${stem}.txt`);
   const outPath = await resolveOutPath(opts.outFlag, defaultPath);
   await writeFile(outPath, text);
   const totalDt = ((performance.now() - runStart) / 1000).toFixed(1);
@@ -427,7 +501,7 @@ async function configCommand(args: string[]): Promise<void> {
     if (!key || value === undefined) throw new Error(`Usage: ocr-now config set <key> <value>`);
     if (!isValidKey(key)) throw new Error(`unknown key "${key}". Valid: ${VALID_CONFIG_KEYS.join(", ")}`);
     if (key === "defaultLang") {
-      const normalized = await validateLang(value);
+      const normalized = value.trim() === AUTO ? AUTO : await validateLang(value);
       cfg.defaultLang = normalized;
       await saveConfig(cfg);
       console.log(`set defaultLang = ${normalized}`);
@@ -511,7 +585,7 @@ function printUsage() {
   console.error("  ocr-now config [list|get|set|unset] ...    # inspect or change settings");
   console.error("");
   console.error("Options:");
-  console.error("  --lang=xxx          tesseract lang code (e.g. eng, tur, tur+eng)");
+  console.error("  --lang=xxx          tesseract lang code (e.g. eng, tur, tur+eng, or 'auto')");
   console.error("  --dpi=N             rasterize PDFs at N dpi (72-600, default 300)");
   console.error("  --pages=1-3,7       PDF only: OCR a subset of pages");
   console.error("  --out=<path>        override output file or directory");
@@ -519,7 +593,7 @@ function printUsage() {
   console.error("");
   console.error("Examples:");
   console.error("  ocr-now config set defaultLang eng");
-  console.error("  ocr-now ~/Downloads/foo.pdf --pages=1-2 --copy");
+  console.error("  ocr-now ~/Downloads/foo.pdf --lang=auto --copy");
   console.error("  ocr-now start --dpi=400 --out=~/Desktop/");
 }
 
