@@ -8,9 +8,21 @@ Thin Bun CLI over Tesseract. Takes PDFs and images, dumps text. Defaults to Turk
 - Tesseract + language data
 - Poppler (for `pdftoppm`, `pdfinfo`, `pdftotext`, `pdfimages`)
 
+Tested on macOS and Linux. Windows isn't tested but shouldn't be architecturally blocked. Bun supports Windows natively and Tesseract and Poppler are both available there. The `--copy` flag is the only piece that won't work on non-macOS (uses `pbcopy`).
+
+### macOS
+
 ```
 brew install tesseract tesseract-lang poppler
 ```
+
+### Linux
+
+```
+sudo apt install tesseract-ocr tesseract-ocr-all poppler-utils
+```
+
+On Fedora the package names are `tesseract`, `tesseract-langpack-*`, and `poppler-utils`. On Arch they're `tesseract`, `tesseract-data-*`, and `poppler`. `tesseract-ocr-all` (or installing every `langpack-*`) pulls every supported language; swap for specific ones if you'd rather keep the footprint small.
 
 ## Install
 
