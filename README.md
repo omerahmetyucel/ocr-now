@@ -36,7 +36,7 @@ ocr-now -v | --version                     # print version
 
 PDF pages are OCR'd in parallel (capped at 6 workers or your CPU core count, whichever is lower). Page order in the output file is preserved regardless of completion order.
 
-If a PDF has embedded text on every selected page (most digitally-generated PDFs do), `ocr-now` extracts it directly via `pdftotext` and skips OCR entirely — a 144-page text PDF goes from ~75s to <1s. Scanned PDFs still go through the OCR pipeline.
+If a PDF has embedded text on every selected page (most digitally-generated PDFs do), `ocr-now` extracts it directly via `pdftotext` and skips OCR entirely. A 144-page text PDF goes from ~75s to <1s. Scanned PDFs still go through the OCR pipeline.
 
 ### Batch mode
 
@@ -91,7 +91,7 @@ Valid keys: `defaultLang`, `defaultDpi`.
 
 Resolution order for each setting: flag → config → built-in default (`tur`, `300`).
 
-`defaultLang` accepts `auto` as a special value — see below.
+`defaultLang` accepts `auto` as a special value. See below.
 
 ## Auto language detection
 
@@ -100,11 +100,13 @@ ocr-now ~/Downloads/foo.pdf --lang=auto
 ocr-now config set defaultLang auto
 ```
 
-Auto mode runs a quick low-DPI sample pass with `eng` as the baseline, runs [`franc-min`](https://github.com/wooorm/franc) on the resulting text, then re-OCRs with the detected language. Cost: ~1–3s extra per file.
+Auto mode runs a quick low-DPI sample pass, runs [`franc-min`](https://github.com/wooorm/franc) on the resulting text, then re-OCRs with the detected language. Cost: ~1–3s extra per file.
+
+Sample-pass baseline picks your configured `defaultLang` if set (so Turkish diacritics survive when reading Turkish docs), otherwise `eng`, otherwise the first installed language. The baseline is also used as the fallback when detection fails.
 
 Notes:
-- Picks the single best match. If your doc is genuinely bilingual, pass `--lang=tur+eng` explicitly — single-pass detection isn't suited to multi-language inference.
-- Fall back to the baseline if the sample text is too short or no installed language matches.
+- Picks the single best match. If your doc is genuinely bilingual, pass `--lang=tur+eng` explicitly. Single-pass detection isn't suited to multi-language inference.
+- Falls back to the baseline if the sample text is too short, no installed language matches, or detection confidence is below 0.2.
 - Detected language is shown per file and used in the output filename. Batch-mode combined output uses `AUTO` in the filename since files may differ; the per-file section header (`[LANG]`) shows what was actually used.
 
 ## Languages

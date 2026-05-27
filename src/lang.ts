@@ -44,11 +44,19 @@ export async function resolveLang(override: string | undefined): Promise<string>
 
 export async function pickAutoBaseline(): Promise<string> {
   const installed = await listInstalledLangs();
-  if (installed.includes("eng")) return "eng";
-  const cfg = await loadConfig();
-  if (cfg.defaultLang && cfg.defaultLang !== AUTO && installed.includes(cfg.defaultLang)) {
-    return cfg.defaultLang;
-  }
   if (installed.length === 0) throw new Error(`no tesseract languages installed`);
+  const installedSet = new Set(installed);
+  // Prefer the user's configured language as the sample-pass model:
+  // it produces clean diacritics for their typical docs, and still passes
+  // through ASCII-clean text in other Latin-script languages well enough
+  // for franc to detect.
+  const cfg = await loadConfig();
+  if (cfg.defaultLang && cfg.defaultLang !== AUTO) {
+    const parts = cfg.defaultLang.split("+").map(p => p.trim()).filter(Boolean);
+    if (parts.length > 0 && parts.every(p => installedSet.has(p))) {
+      return cfg.defaultLang;
+    }
+  }
+  if (installedSet.has("eng")) return "eng";
   return installed.sort()[0];
 }

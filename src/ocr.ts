@@ -6,8 +6,8 @@ import { listInstalledLangs, pickAutoBaseline } from "./lang";
 import { run, runPool } from "./shell";
 import { isTty, renderBar, startSpinner } from "./tty";
 import {
-  AUTO, AUTO_DETECTION_DPI, AUTO_MIN_SAMPLE_CHARS, CONCURRENCY, FRANC_TO_TESS,
-  classify, fmtBytes, pageNumOf,
+  AUTO, AUTO_DETECTION_DPI, AUTO_MIN_CONFIDENCE, AUTO_MIN_SAMPLE_CHARS,
+  CONCURRENCY, FRANC_TO_TESS, classify, fmtBytes, pageNumOf,
 } from "./util";
 
 export type PageRange = [number, number];
@@ -140,12 +140,16 @@ async function detectFromSample(sample: string): Promise<string> {
   const installed = new Set(await listInstalledLangs());
   const ranked = francAll(cleaned)
     .map(([code, score]) => [FRANC_TO_TESS[code] ?? code, score] as [string, number])
-    .filter(([code, score]) => installed.has(code) && score > 0);
+    .filter(([code]) => installed.has(code));
   if (ranked.length === 0) {
     console.log(`auto   no installed language matched detection, falling back to ${baseline}`);
     return baseline;
   }
   const [primary, secondary] = ranked;
+  if (primary[1] < AUTO_MIN_CONFIDENCE) {
+    console.log(`auto   top match ${primary[0]} ${primary[1].toFixed(2)} below threshold ${AUTO_MIN_CONFIDENCE}, falling back to ${baseline}`);
+    return baseline;
+  }
   const tail = secondary ? `  (runner-up: ${secondary[0]} ${secondary[1].toFixed(2)})` : "";
   console.log(`auto   detected: ${primary[0]} ${primary[1].toFixed(2)}${tail} → --lang=${primary[0]}`);
   return primary[0];

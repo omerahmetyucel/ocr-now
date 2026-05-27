@@ -8,6 +8,7 @@ export const DPI_MIN = 72;
 export const DPI_MAX = 600;
 export const AUTO_DETECTION_DPI = "150";
 export const AUTO_MIN_SAMPLE_CHARS = 20;
+export const AUTO_MIN_CONFIDENCE = 0.2;
 export const CONCURRENCY = Math.max(1, Math.min(6, cpus().length));
 
 export const IMAGE_EXTS = new Set([
