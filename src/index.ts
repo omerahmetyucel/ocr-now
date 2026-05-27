@@ -4,12 +4,17 @@ import { join, extname, dirname, basename, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
 const HARDCODED_DEFAULT_LANG = "tur";
-const DPI = "300";
+const HARDCODED_DEFAULT_DPI = 300;
+const DPI_MIN = 72;
+const DPI_MAX = 600;
 const IMAGE_EXTS = new Set([
   ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp", ".gif",
 ]);
 const PROJECT_ROOT = dirname(import.meta.dir);
 const CONFIG_PATH = join(PROJECT_ROOT, "config.json");
+const VALID_CONFIG_KEYS = ["defaultLang", "defaultDpi"] as const;
+type ConfigKey = (typeof VALID_CONFIG_KEYS)[number];
+type Config = { defaultLang?: string; defaultDpi?: number };
 
 type RunResult = { stdout: string; stderr: string; exitCode: number };
 
@@ -55,44 +60,6 @@ async function run(cmd: string[]): Promise<RunResult> {
   return { stdout, stderr, exitCode };
 }
 
-async function ocrImage(path: string, lang: string): Promise<string> {
-  const { stdout, stderr, exitCode } = await run([
-    "tesseract", path, "stdout", "-l", lang,
-  ]);
-  if (exitCode !== 0) throw new Error(`tesseract failed: ${stderr.trim()}`);
-  return stdout;
-}
-
-async function ocrPdf(path: string, lang: string): Promise<{ text: string; pages: number }> {
-  const tmp = await mkdtemp(join(tmpdir(), "ocr-now-"));
-  try {
-    const stopSpinner = startSpinner("rasterizing pdf");
-    const tRast = performance.now();
-    const { exitCode, stderr } = await run([
-      "pdftoppm", "-r", DPI, "-png", path, join(tmp, "page"),
-    ]);
-    stopSpinner();
-    if (exitCode !== 0) throw new Error(`pdftoppm failed: ${stderr.trim()}`);
-    const pages = (await readdir(tmp)).filter(f => f.endsWith(".png")).sort();
-    const rastDt = ((performance.now() - tRast) / 1000).toFixed(1);
-    console.log(`       rasterized ${pages.length} page${pages.length === 1 ? "" : "s"} (${rastDt}s)`);
-
-    const parts: string[] = [];
-    const tOcr = performance.now();
-    renderBar(0, pages.length, tOcr);
-    for (let i = 0; i < pages.length; i++) {
-      const text = await ocrImage(join(tmp, pages[i]), lang);
-      parts.push(`--- Page ${i + 1} ---\n${text.trim()}`);
-      renderBar(i + 1, pages.length, tOcr);
-      if (!isTty) console.log(`         page ${i + 1}/${pages.length}`);
-    }
-    if (isTty) process.stdout.write("\n");
-    return { text: parts.join("\n\n"), pages: pages.length };
-  } finally {
-    await rm(tmp, { recursive: true, force: true });
-  }
-}
-
 function fmtBytes(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
@@ -106,105 +73,9 @@ function classify(path: string): "pdf" | "img" | null {
   return null;
 }
 
-async function processFile(
-  path: string,
-  label: string,
-  lang: string,
-): Promise<{ text: string; pages: number; kind: "pdf" | "img" }> {
-  const kind = classify(path);
-  if (!kind) throw new Error(`unsupported file type: ${path}`);
-  const size = fmtBytes((await stat(path)).size);
-  console.log(`ocr    ${label}  [${kind}, ${size}]`);
-  const t0 = performance.now();
-  let text: string;
-  let pages = 1;
-  if (kind === "pdf") {
-    const r = await ocrPdf(path, lang);
-    text = r.text;
-    pages = r.pages;
-  } else {
-    const stopSpinner = startSpinner("ocr");
-    try {
-      text = await ocrImage(path, lang);
-    } finally {
-      stopSpinner();
-    }
-  }
-  const dt = ((performance.now() - t0) / 1000).toFixed(1);
-  console.log(`done   ${label}  pages=${pages}  chars=${text.length}  took=${dt}s`);
-  return { text, pages, kind };
-}
+// ---------- config ----------
 
-async function start(lang: string) {
-  const inputDir = join(PROJECT_ROOT, "input");
-  const outputDir = join(PROJECT_ROOT, "output");
-  await mkdir(inputDir, { recursive: true });
-  await mkdir(outputDir, { recursive: true });
-
-  const entries = (await readdir(inputDir))
-    .filter(f => !f.startsWith("."))
-    .sort();
-  if (entries.length === 0) {
-    console.error(`No files in ${inputDir}`);
-    process.exit(1);
-  }
-
-  console.log(`engine tesseract  lang=${lang}  dpi=${DPI}`);
-  console.log(`input  ${inputDir}  (${entries.length} entr${entries.length === 1 ? "y" : "ies"})`);
-
-  const sections: string[] = [];
-  let totalPages = 0;
-  const runStart = performance.now();
-
-  for (const name of entries) {
-    const full = join(inputDir, name);
-    if (!classify(full)) {
-      console.log(`skip   ${name} (unsupported)`);
-      continue;
-    }
-    const { text, pages } = await processFile(full, name, lang);
-    totalPages += pages;
-    sections.push(`========== ${name} ==========\n${text.trim()}\n`);
-  }
-
-  if (sections.length === 0) {
-    console.error("Nothing to OCR.");
-    process.exit(1);
-  }
-
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-  const outPath = join(outputDir, `ocr-now ${lang.toUpperCase()} ${stamp}.txt`);
-  const body = sections.join("\n");
-  await writeFile(outPath, body);
-  const totalDt = ((performance.now() - runStart) / 1000).toFixed(1);
-  console.log(`wrote  ${outPath}  (${fmtBytes(body.length)}, ${totalPages} page${totalPages === 1 ? "" : "s"}, ${totalDt}s total)`);
-}
-
-async function single(arg: string, lang: string) {
-  const path = resolve(process.cwd(), arg);
-  let s;
-  try {
-    s = await stat(path);
-  } catch {
-    throw new Error(`not found: ${path}`);
-  }
-  if (!s.isFile()) throw new Error(`not a file: ${path}`);
-  if (!classify(path)) throw new Error(`unsupported file type: ${path}`);
-
-  console.log(`engine tesseract  lang=${lang}  dpi=${DPI}`);
-  console.log(`file   ${path}`);
-
-  const runStart = performance.now();
-  const name = basename(path);
-  const { text, pages } = await processFile(path, name, lang);
-  const stem = name.slice(0, name.length - extname(name).length);
-  const outPath = join(dirname(path), `ocr-now ${lang.toUpperCase()} ${stem}.txt`);
-  await writeFile(outPath, text);
-  const totalDt = ((performance.now() - runStart) / 1000).toFixed(1);
-  console.log(`wrote  ${outPath}  (${fmtBytes(text.length)}, ${pages} page${pages === 1 ? "" : "s"}, ${totalDt}s total)`);
-}
-
-async function loadConfig(): Promise<{ defaultLang?: string }> {
+async function loadConfig(): Promise<Config> {
   try {
     return JSON.parse(await readFile(CONFIG_PATH, "utf8"));
   } catch {
@@ -212,9 +83,15 @@ async function loadConfig(): Promise<{ defaultLang?: string }> {
   }
 }
 
-async function saveConfig(cfg: { defaultLang?: string }): Promise<void> {
+async function saveConfig(cfg: Config): Promise<void> {
   await writeFile(CONFIG_PATH, JSON.stringify(cfg, null, 2) + "\n");
 }
+
+function isValidKey(k: string): k is ConfigKey {
+  return (VALID_CONFIG_KEYS as readonly string[]).includes(k);
+}
+
+// ---------- lang ----------
 
 async function listInstalledLangs(): Promise<string[]> {
   let res;
@@ -226,14 +103,13 @@ async function listInstalledLangs(): Promise<string[]> {
   if (res.exitCode !== 0) {
     throw new Error(`tesseract --list-langs failed: ${res.stderr.trim() || res.stdout.trim()}`);
   }
-  // tesseract writes the list to stdout on newer versions, stderr on older — handle both.
   return (res.stdout + "\n" + res.stderr)
     .split("\n")
     .map(s => s.trim())
     .filter(s => s && /^[a-zA-Z0-9_]+$/.test(s) && s !== "List");
 }
 
-async function validateLang(lang: string): Promise<void> {
+async function validateLang(lang: string): Promise<string> {
   const parts = lang.split("+").map(p => p.trim()).filter(Boolean);
   if (parts.length === 0) throw new Error(`empty language value`);
   const installed = new Set(await listInstalledLangs());
@@ -247,6 +123,7 @@ async function validateLang(lang: string): Promise<void> {
       `       tesseract uses ISO 639-2/T codes (e.g. eng, tur, deu, fra). Combine with '+': --lang=tur+eng`
     );
   }
+  return parts.join("+");
 }
 
 async function resolveLang(override: string | undefined): Promise<string> {
@@ -255,52 +132,389 @@ async function resolveLang(override: string | undefined): Promise<string> {
   return lang;
 }
 
-function parseArgs(argv: string[]): { flags: Record<string, string>; positional: string[] } {
-  const flags: Record<string, string> = {};
+// ---------- dpi ----------
+
+function validateDpi(value: string | number): number {
+  const n = typeof value === "number" ? value : parseInt(String(value), 10);
+  if (!Number.isFinite(n) || !Number.isInteger(n)) throw new Error(`dpi must be an integer`);
+  if (n < DPI_MIN || n > DPI_MAX) throw new Error(`dpi must be between ${DPI_MIN} and ${DPI_MAX}`);
+  return n;
+}
+
+async function resolveDpi(override: string | undefined): Promise<number> {
+  if (override !== undefined && override !== "") return validateDpi(override);
+  const cfg = await loadConfig();
+  return cfg.defaultDpi ?? HARDCODED_DEFAULT_DPI;
+}
+
+// ---------- pages ----------
+
+type PageRange = [number, number];
+
+function parsePages(spec: string): PageRange[] {
+  const ranges: PageRange[] = [];
+  for (const part of spec.split(",").map(s => s.trim()).filter(Boolean)) {
+    const m = /^(\d+)(?:-(\d+))?$/.exec(part);
+    if (!m) throw new Error(`invalid --pages segment: "${part}" (expected N or N-M)`);
+    const lo = parseInt(m[1], 10);
+    const hi = m[2] ? parseInt(m[2], 10) : lo;
+    if (lo < 1) throw new Error(`--pages values must be >= 1 (got "${part}")`);
+    if (hi < lo) throw new Error(`--pages range "${part}" has end < start`);
+    ranges.push([lo, hi]);
+  }
+  if (ranges.length === 0) throw new Error(`--pages requires a value, e.g. --pages=1-3,7`);
+  ranges.sort((a, b) => a[0] - b[0]);
+  const merged: PageRange[] = [];
+  for (const r of ranges) {
+    const last = merged[merged.length - 1];
+    if (last && r[0] <= last[1] + 1) last[1] = Math.max(last[1], r[1]);
+    else merged.push([r[0], r[1]]);
+  }
+  return merged;
+}
+
+// ---------- ocr ----------
+
+async function ocrImage(path: string, lang: string): Promise<string> {
+  const { stdout, stderr, exitCode } = await run([
+    "tesseract", path, "stdout", "-l", lang,
+  ]);
+  if (exitCode !== 0) throw new Error(`tesseract failed: ${stderr.trim()}`);
+  return stdout;
+}
+
+function pageNumOf(filename: string): number {
+  const m = /-(\d+)\.png$/.exec(filename);
+  return m ? parseInt(m[1], 10) : 0;
+}
+
+async function ocrPdf(
+  path: string,
+  lang: string,
+  dpi: number,
+  pageRanges: PageRange[] | null,
+): Promise<{ text: string; pages: number }> {
+  const tmp = await mkdtemp(join(tmpdir(), "ocr-now-"));
+  try {
+    const label = pageRanges
+      ? `rasterizing pdf (pages ${pageRanges.map(([a, b]) => a === b ? `${a}` : `${a}-${b}`).join(",")})`
+      : "rasterizing pdf";
+    const stopSpinner = startSpinner(label);
+    const tRast = performance.now();
+    const prefix = join(tmp, "page");
+    const baseArgs = ["pdftoppm", "-r", String(dpi), "-png"];
+
+    if (pageRanges) {
+      for (const [lo, hi] of pageRanges) {
+        const { exitCode, stderr } = await run([
+          ...baseArgs, "-f", String(lo), "-l", String(hi), path, prefix,
+        ]);
+        if (exitCode !== 0) {
+          stopSpinner();
+          throw new Error(`pdftoppm failed: ${stderr.trim()}`);
+        }
+      }
+    } else {
+      const { exitCode, stderr } = await run([...baseArgs, path, prefix]);
+      if (exitCode !== 0) {
+        stopSpinner();
+        throw new Error(`pdftoppm failed: ${stderr.trim()}`);
+      }
+    }
+    stopSpinner();
+
+    const pngs = (await readdir(tmp))
+      .filter(f => f.endsWith(".png"))
+      .sort((a, b) => pageNumOf(a) - pageNumOf(b));
+    if (pngs.length === 0) throw new Error(`pdftoppm produced no pages (range out of bounds?)`);
+    const rastDt = ((performance.now() - tRast) / 1000).toFixed(1);
+    console.log(`       rasterized ${pngs.length} page${pngs.length === 1 ? "" : "s"} @ ${dpi} dpi (${rastDt}s)`);
+
+    const parts: string[] = [];
+    const tOcr = performance.now();
+    renderBar(0, pngs.length, tOcr);
+    for (let i = 0; i < pngs.length; i++) {
+      const pageNum = pageNumOf(pngs[i]) || i + 1;
+      const text = await ocrImage(join(tmp, pngs[i]), lang);
+      parts.push(`--- Page ${pageNum} ---\n${text.trim()}`);
+      renderBar(i + 1, pngs.length, tOcr);
+      if (!isTty) console.log(`         page ${pageNum} (${i + 1}/${pngs.length})`);
+    }
+    if (isTty) process.stdout.write("\n");
+    return { text: parts.join("\n\n"), pages: pngs.length };
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+}
+
+// ---------- shared per-file driver ----------
+
+type RunOpts = {
+  lang: string;
+  dpi: number;
+  pageRanges: PageRange[] | null;
+  outFlag?: string;
+  copy: boolean;
+};
+
+async function processFile(
+  path: string,
+  label: string,
+  opts: RunOpts,
+): Promise<{ text: string; pages: number; kind: "pdf" | "img" }> {
+  const kind = classify(path);
+  if (!kind) throw new Error(`unsupported file type: ${path}`);
+  const size = fmtBytes((await stat(path)).size);
+  console.log(`ocr    ${label}  [${kind}, ${size}]`);
+  const t0 = performance.now();
+  let text: string;
+  let pages = 1;
+  if (kind === "pdf") {
+    const r = await ocrPdf(path, opts.lang, opts.dpi, opts.pageRanges);
+    text = r.text;
+    pages = r.pages;
+  } else {
+    if (opts.pageRanges) console.log(`       (--pages ignored for image input)`);
+    const stop = startSpinner("ocr");
+    try {
+      text = await ocrImage(path, opts.lang);
+    } finally {
+      stop();
+    }
+  }
+  const dt = ((performance.now() - t0) / 1000).toFixed(1);
+  console.log(`done   ${label}  pages=${pages}  chars=${text.length}  took=${dt}s`);
+  return { text, pages, kind };
+}
+
+// ---------- output / clipboard ----------
+
+async function resolveOutPath(outFlag: string | undefined, defaultPath: string): Promise<string> {
+  if (!outFlag) {
+    await mkdir(dirname(defaultPath), { recursive: true });
+    return defaultPath;
+  }
+  const abs = resolve(process.cwd(), outFlag);
+  let isDir = outFlag.endsWith("/");
+  try {
+    const s = await stat(abs);
+    if (s.isDirectory()) isDir = true;
+  } catch {}
+  if (isDir) {
+    await mkdir(abs, { recursive: true });
+    return join(abs, basename(defaultPath));
+  }
+  await mkdir(dirname(abs), { recursive: true });
+  return abs;
+}
+
+async function copyToClipboard(text: string): Promise<void> {
+  const proc = Bun.spawn(["pbcopy"], { stdin: new Blob([text]) });
+  const exitCode = await proc.exited;
+  if (exitCode !== 0) throw new Error(`pbcopy exited with code ${exitCode}`);
+}
+
+// ---------- modes ----------
+
+async function start(opts: RunOpts) {
+  const inputDir = join(PROJECT_ROOT, "input");
+  const outputDir = join(PROJECT_ROOT, "output");
+  await mkdir(inputDir, { recursive: true });
+  await mkdir(outputDir, { recursive: true });
+
+  const entries = (await readdir(inputDir))
+    .filter(f => !f.startsWith("."))
+    .sort();
+  if (entries.length === 0) {
+    console.error(`No files in ${inputDir}`);
+    process.exit(1);
+  }
+
+  console.log(`engine tesseract  lang=${opts.lang}  dpi=${opts.dpi}${opts.pageRanges ? `  pages=${opts.pageRanges.map(([a, b]) => a === b ? `${a}` : `${a}-${b}`).join(",")}` : ""}`);
+  console.log(`input  ${inputDir}  (${entries.length} entr${entries.length === 1 ? "y" : "ies"})`);
+
+  const sections: string[] = [];
+  let totalPages = 0;
+  const runStart = performance.now();
+
+  for (const name of entries) {
+    const full = join(inputDir, name);
+    if (!classify(full)) {
+      console.log(`skip   ${name} (unsupported)`);
+      continue;
+    }
+    const { text, pages } = await processFile(full, name, opts);
+    totalPages += pages;
+    sections.push(`========== ${name} ==========\n${text.trim()}\n`);
+  }
+
+  if (sections.length === 0) {
+    console.error("Nothing to OCR.");
+    process.exit(1);
+  }
+
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  const defaultPath = join(outputDir, `ocr-now ${opts.lang.toUpperCase()} ${stamp}.txt`);
+  const outPath = await resolveOutPath(opts.outFlag, defaultPath);
+  const body = sections.join("\n");
+  await writeFile(outPath, body);
+  const totalDt = ((performance.now() - runStart) / 1000).toFixed(1);
+  console.log(`wrote  ${outPath}  (${fmtBytes(body.length)}, ${totalPages} page${totalPages === 1 ? "" : "s"}, ${totalDt}s total)`);
+
+  if (opts.copy) {
+    await copyToClipboard(body);
+    console.log(`copied to clipboard (${body.length} chars)`);
+  }
+}
+
+async function single(arg: string, opts: RunOpts) {
+  const path = resolve(process.cwd(), arg);
+  let s;
+  try {
+    s = await stat(path);
+  } catch {
+    throw new Error(`not found: ${path}`);
+  }
+  if (!s.isFile()) throw new Error(`not a file: ${path}`);
+  if (!classify(path)) throw new Error(`unsupported file type: ${path}`);
+
+  console.log(`engine tesseract  lang=${opts.lang}  dpi=${opts.dpi}${opts.pageRanges ? `  pages=${opts.pageRanges.map(([a, b]) => a === b ? `${a}` : `${a}-${b}`).join(",")}` : ""}`);
+  console.log(`file   ${path}`);
+
+  const runStart = performance.now();
+  const name = basename(path);
+  const { text, pages } = await processFile(path, name, opts);
+  const stem = name.slice(0, name.length - extname(name).length);
+  const defaultPath = join(dirname(path), `ocr-now ${opts.lang.toUpperCase()} ${stem}.txt`);
+  const outPath = await resolveOutPath(opts.outFlag, defaultPath);
+  await writeFile(outPath, text);
+  const totalDt = ((performance.now() - runStart) / 1000).toFixed(1);
+  console.log(`wrote  ${outPath}  (${fmtBytes(text.length)}, ${pages} page${pages === 1 ? "" : "s"}, ${totalDt}s total)`);
+
+  if (opts.copy) {
+    await copyToClipboard(text);
+    console.log(`copied to clipboard (${text.length} chars)`);
+  }
+}
+
+// ---------- config subcommand ----------
+
+async function configCommand(args: string[]): Promise<void> {
+  const sub = args[0] ?? "list";
+  const cfg = await loadConfig();
+
+  if (sub === "list") {
+    console.log(`config file: ${CONFIG_PATH}`);
+    const langSet = cfg.defaultLang !== undefined;
+    const dpiSet = cfg.defaultDpi !== undefined;
+    console.log(`  defaultLang = ${cfg.defaultLang ?? HARDCODED_DEFAULT_LANG}${langSet ? "" : "  (default)"}`);
+    console.log(`  defaultDpi  = ${cfg.defaultDpi ?? HARDCODED_DEFAULT_DPI}${dpiSet ? "" : "  (default)"}`);
+    return;
+  }
+
+  if (sub === "get") {
+    const key = args[1];
+    if (!key) throw new Error(`Usage: ocr-now config get <key>`);
+    if (!isValidKey(key)) throw new Error(`unknown key "${key}". Valid: ${VALID_CONFIG_KEYS.join(", ")}`);
+    const val = cfg[key] ?? (key === "defaultLang" ? HARDCODED_DEFAULT_LANG : HARDCODED_DEFAULT_DPI);
+    console.log(String(val));
+    return;
+  }
+
+  if (sub === "set") {
+    const key = args[1];
+    const value = args[2];
+    if (!key || value === undefined) throw new Error(`Usage: ocr-now config set <key> <value>`);
+    if (!isValidKey(key)) throw new Error(`unknown key "${key}". Valid: ${VALID_CONFIG_KEYS.join(", ")}`);
+    if (key === "defaultLang") {
+      const normalized = await validateLang(value);
+      cfg.defaultLang = normalized;
+      await saveConfig(cfg);
+      console.log(`set defaultLang = ${normalized}`);
+    } else {
+      const n = validateDpi(value);
+      cfg.defaultDpi = n;
+      await saveConfig(cfg);
+      console.log(`set defaultDpi = ${n}`);
+    }
+    return;
+  }
+
+  if (sub === "unset") {
+    const key = args[1];
+    if (!key) throw new Error(`Usage: ocr-now config unset <key>`);
+    if (!isValidKey(key)) throw new Error(`unknown key "${key}". Valid: ${VALID_CONFIG_KEYS.join(", ")}`);
+    delete cfg[key];
+    await saveConfig(cfg);
+    console.log(`unset ${key}`);
+    return;
+  }
+
+  throw new Error(`Usage: ocr-now config [list | get <key> | set <key> <value> | unset <key>]`);
+}
+
+// ---------- arg parsing & dispatch ----------
+
+function parseArgs(argv: string[]): { flags: Record<string, string | true>; positional: string[] } {
+  const flags: Record<string, string | true> = {};
   const positional: string[] = [];
   for (const a of argv) {
     const m = /^--([a-zA-Z][a-zA-Z0-9-]*)(?:=(.*))?$/.exec(a);
-    if (m) flags[m[1]] = m[2] ?? "";
+    if (m) flags[m[1]] = m[2] !== undefined ? m[2] : true;
     else positional.push(a);
   }
   return { flags, positional };
 }
 
+function flagStr(v: string | true | undefined): string | undefined {
+  return typeof v === "string" ? v : undefined;
+}
+
 function printUsage() {
-  console.error("Usage: ocr-now start [--lang=xxx]        # batch project's input/ folder");
-  console.error("       ocr-now <file> [--lang=xxx]       # OCR a single file in place");
-  console.error("       ocr-now --setDefaultLang=xxx      # persist the default language");
+  console.error("Usage:");
+  console.error("  ocr-now start [opts]                       # batch project's input/ folder");
+  console.error("  ocr-now <file> [opts]                      # OCR a single file in place");
+  console.error("  ocr-now config [list|get|set|unset] ...    # inspect or change settings");
   console.error("");
-  console.error("Languages use Tesseract ISO 639-2/T codes (e.g. eng, tur, deu, fra, spa).");
-  console.error("Combine with '+': --lang=tur+eng");
+  console.error("Options:");
+  console.error("  --lang=xxx          tesseract lang code (e.g. eng, tur, tur+eng)");
+  console.error("  --dpi=N             rasterize PDFs at N dpi (72-600, default 300)");
+  console.error("  --pages=1-3,7       PDF only: OCR a subset of pages");
+  console.error("  --out=<path>        override output file or directory");
+  console.error("  --copy              also copy result to clipboard (pbcopy)");
+  console.error("");
+  console.error("Examples:");
+  console.error("  ocr-now config set defaultLang eng");
+  console.error("  ocr-now ~/Downloads/foo.pdf --pages=1-2 --copy");
+  console.error("  ocr-now start --dpi=400 --out=~/Desktop/");
 }
 
 async function main() {
   const { flags, positional } = parseArgs(process.argv.slice(2));
+  const cmd = positional[0];
 
-  if ("setDefaultLang" in flags) {
-    const lang = flags.setDefaultLang.trim();
-    if (!lang) throw new Error(`--setDefaultLang requires a value, e.g. --setDefaultLang=eng`);
-    await validateLang(lang);
-    const cfg = await loadConfig();
-    cfg.defaultLang = lang;
-    await saveConfig(cfg);
-    console.log(`default language set to "${lang}"  (saved to ${CONFIG_PATH})`);
+  if (cmd === "config") {
+    await configCommand(positional.slice(1));
     return;
   }
 
-  const cmdOrFile = positional[0];
-  if (!cmdOrFile) {
+  if (!cmd) {
     printUsage();
     process.exit(1);
   }
 
-  const lang = await resolveLang(flags.lang);
+  const lang = await resolveLang(flagStr(flags.lang));
+  const dpi = await resolveDpi(flagStr(flags.dpi));
+  const pageRanges = flagStr(flags.pages) ? parsePages(flagStr(flags.pages)!) : null;
+  const outFlag = flagStr(flags.out);
+  const copy = Boolean(flags.copy);
 
-  if (cmdOrFile === "start") {
-    await start(lang);
+  const opts: RunOpts = { lang, dpi, pageRanges, outFlag, copy };
+
+  if (cmd === "start") {
+    await start(opts);
   } else {
-    await single(cmdOrFile, lang);
+    await single(cmd, opts);
   }
 }
 
