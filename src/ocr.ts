@@ -50,6 +50,28 @@ export async function ocrImage(path: string, lang: string): Promise<string> {
   return stdout;
 }
 
+async function getPdfPageCount(path: string): Promise<number> {
+  const { stdout, stderr, exitCode } = await run(["pdfinfo", path]);
+  if (exitCode !== 0) throw new Error(`pdfinfo failed: ${stderr.trim()}`);
+  const m = /^Pages:\s+(\d+)/m.exec(stdout);
+  if (!m) throw new Error(`could not parse page count from pdfinfo output`);
+  return parseInt(m[1], 10);
+}
+
+// Split ranges into chunks of ~equal page count, never crossing a range boundary.
+function planRasterTasks(ranges: PageRange[], workers: number): PageRange[] {
+  const total = ranges.reduce((acc, [a, b]) => acc + (b - a + 1), 0);
+  if (total === 0) return [];
+  const chunkSize = Math.max(1, Math.ceil(total / workers));
+  const tasks: PageRange[] = [];
+  for (const [lo, hi] of ranges) {
+    for (let s = lo; s <= hi; s += chunkSize) {
+      tasks.push([s, Math.min(s + chunkSize - 1, hi)]);
+    }
+  }
+  return tasks;
+}
+
 async function ocrPdf(
   path: string,
   lang: string,
@@ -58,6 +80,8 @@ async function ocrPdf(
 ): Promise<{ text: string; pages: number }> {
   const tmp = await mkdtemp(join(tmpdir(), "ocr-now-"));
   try {
+    const effRanges: PageRange[] = pageRanges ?? [[1, await getPdfPageCount(path)]];
+    const tasks = planRasterTasks(effRanges, CONCURRENCY);
     const label = pageRanges
       ? `rasterizing pdf (pages ${pageRanges.map(([a, b]) => a === b ? `${a}` : `${a}-${b}`).join(",")})`
       : "rasterizing pdf";
@@ -66,24 +90,16 @@ async function ocrPdf(
     const prefix = join(tmp, "page");
     const baseArgs = ["pdftoppm", "-r", String(dpi), "-png"];
 
-    if (pageRanges) {
-      for (const [lo, hi] of pageRanges) {
+    try {
+      await runPool(tasks, CONCURRENCY, async ([lo, hi]) => {
         const { exitCode, stderr } = await run([
           ...baseArgs, "-f", String(lo), "-l", String(hi), path, prefix,
         ]);
-        if (exitCode !== 0) {
-          stopSpinner();
-          throw new Error(`pdftoppm failed: ${stderr.trim()}`);
-        }
-      }
-    } else {
-      const { exitCode, stderr } = await run([...baseArgs, path, prefix]);
-      if (exitCode !== 0) {
-        stopSpinner();
-        throw new Error(`pdftoppm failed: ${stderr.trim()}`);
-      }
+        if (exitCode !== 0) throw new Error(`pdftoppm failed: ${stderr.trim()}`);
+      });
+    } finally {
+      stopSpinner();
     }
-    stopSpinner();
 
     const pngs = (await readdir(tmp))
       .filter(f => f.endsWith(".png"))
