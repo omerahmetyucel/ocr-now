@@ -25,6 +25,7 @@ function printUsage(toStdout = false) {
   out("  --out=<path>        override output file or directory");
   out("  --copy              also copy result to clipboard (pbcopy)");
   out("  --stdout            write result to stdout instead of a file (for piping)");
+  out("  --quiet             suppress progress output (errors still print)");
   out("  -h, --help          show this help");
   out("  -v, --version       print version");
   out("");
@@ -122,10 +123,15 @@ async function main() {
   }
 
   const stdout = flags.stdout === true;
-  if (stdout) {
-    // Route all status logs to stderr so stdout carries only the OCR text.
-    // Also force non-TTY so spinner/progress bar don't paint into stdout.
+  const quiet = flags.quiet === true;
+  if (stdout || quiet) {
+    // Force non-TTY so spinner/progress bar don't paint anywhere.
     (process.stdout as { isTTY?: boolean }).isTTY = false;
+  }
+  if (quiet) {
+    console.log = () => {};
+  } else if (stdout) {
+    // Route status logs to stderr so stdout carries only the OCR text.
     console.log = (...args: unknown[]) => console.error(...(args as Parameters<typeof console.error>));
   }
 
