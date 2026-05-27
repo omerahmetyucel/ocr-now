@@ -1,8 +1,9 @@
 #!/usr/bin/env bun
 import { readdir, mkdir, writeFile, rm, mkdtemp, stat, readFile } from "node:fs/promises";
 import { join, extname, dirname, basename, resolve } from "node:path";
-import { tmpdir } from "node:os";
+import { tmpdir, cpus } from "node:os";
 import { francAll } from "franc-min";
+import pkg from "../package.json" with { type: "json" };
 
 const AUTO = "auto";
 const HARDCODED_DEFAULT_LANG = "tur";
@@ -11,6 +12,7 @@ const DPI_MIN = 72;
 const DPI_MAX = 600;
 const AUTO_DETECTION_DPI = "150";
 const AUTO_MIN_SAMPLE_CHARS = 20;
+const CONCURRENCY = Math.max(1, Math.min(6, cpus().length));
 // ISO 639-3 (franc) → Tesseract code, only for entries that aren't identity.
 const FRANC_TO_TESS: Record<string, string> = {
   cmn: "chi_sim",
@@ -58,6 +60,24 @@ function renderBar(done: number, total: number, t0: number) {
   const pct = Math.round((done / total) * 100);
   const dt = ((performance.now() - t0) / 1000).toFixed(1);
   process.stdout.write(`\r\x1b[2K       [${bar}] ${done}/${total} (${pct}%) ${dt}s`);
+}
+
+async function runPool<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T, idx: number) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (true) {
+      const i = next++;
+      if (i >= items.length) break;
+      results[i] = await fn(items[i], i);
+    }
+  });
+  await Promise.all(workers);
+  return results;
 }
 
 async function run(cmd: string[]): Promise<RunResult> {
@@ -300,17 +320,21 @@ async function ocrPdf(
     const rastDt = ((performance.now() - tRast) / 1000).toFixed(1);
     console.log(`       rasterized ${pngs.length} page${pngs.length === 1 ? "" : "s"} @ ${dpi} dpi (${rastDt}s)`);
 
-    const parts: string[] = [];
     const tOcr = performance.now();
+    let done = 0;
     renderBar(0, pngs.length, tOcr);
-    for (let i = 0; i < pngs.length; i++) {
-      const pageNum = pageNumOf(pngs[i]) || i + 1;
-      const text = await ocrImage(join(tmp, pngs[i]), lang);
-      parts.push(`--- Page ${pageNum} ---\n${text.trim()}`);
-      renderBar(i + 1, pngs.length, tOcr);
-      if (!isTty) console.log(`         page ${pageNum} (${i + 1}/${pngs.length})`);
-    }
+    const texts = await runPool(pngs, CONCURRENCY, async name => {
+      const text = await ocrImage(join(tmp, name), lang);
+      done++;
+      renderBar(done, pngs.length, tOcr);
+      if (!isTty) console.log(`         page ${pageNumOf(name) || "?"} done (${done}/${pngs.length})`);
+      return text;
+    });
     if (isTty) process.stdout.write("\n");
+    const parts = pngs.map((name, i) => {
+      const pageNum = pageNumOf(name) || i + 1;
+      return `--- Page ${pageNum} ---\n${texts[i].trim()}`;
+    });
     return { text: parts.join("\n\n"), pages: pngs.length };
   } finally {
     await rm(tmp, { recursive: true, force: true });
@@ -403,7 +427,7 @@ async function start(opts: RunOpts) {
     process.exit(1);
   }
 
-  console.log(`engine tesseract  lang=${opts.lang}  dpi=${opts.dpi}${opts.pageRanges ? `  pages=${opts.pageRanges.map(([a, b]) => a === b ? `${a}` : `${a}-${b}`).join(",")}` : ""}`);
+  console.log(`engine tesseract  lang=${opts.lang}  dpi=${opts.dpi}  concurrency=${CONCURRENCY}${opts.pageRanges ? `  pages=${opts.pageRanges.map(([a, b]) => a === b ? `${a}` : `${a}-${b}`).join(",")}` : ""}`);
   console.log(`input  ${inputDir}  (${entries.length} entr${entries.length === 1 ? "y" : "ies"})`);
 
   const sections: string[] = [];
@@ -452,7 +476,7 @@ async function single(arg: string, opts: RunOpts) {
   if (!s.isFile()) throw new Error(`not a file: ${path}`);
   if (!classify(path)) throw new Error(`unsupported file type: ${path}`);
 
-  console.log(`engine tesseract  lang=${opts.lang}  dpi=${opts.dpi}${opts.pageRanges ? `  pages=${opts.pageRanges.map(([a, b]) => a === b ? `${a}` : `${a}-${b}`).join(",")}` : ""}`);
+  console.log(`engine tesseract  lang=${opts.lang}  dpi=${opts.dpi}  concurrency=${CONCURRENCY}${opts.pageRanges ? `  pages=${opts.pageRanges.map(([a, b]) => a === b ? `${a}` : `${a}-${b}`).join(",")}` : ""}`);
   console.log(`file   ${path}`);
 
   const runStart = performance.now();
@@ -529,10 +553,16 @@ async function configCommand(args: string[]): Promise<void> {
 
 // ---------- arg parsing & dispatch ----------
 
+const SHORT_FLAGS: Record<string, string> = { "-h": "help", "-v": "version" };
+
 function parseArgs(argv: string[]): { flags: Record<string, string | true>; positional: string[] } {
   const flags: Record<string, string | true> = {};
   const positional: string[] = [];
   for (const a of argv) {
+    if (a in SHORT_FLAGS) {
+      flags[SHORT_FLAGS[a]] = true;
+      continue;
+    }
     const m = /^--([a-zA-Z][a-zA-Z0-9-]*)(?:=(.*))?$/.exec(a);
     if (m) flags[m[1]] = m[2] !== undefined ? m[2] : true;
     else positional.push(a);
@@ -544,7 +574,7 @@ function flagStr(v: string | true | undefined): string | undefined {
   return typeof v === "string" ? v : undefined;
 }
 
-const KNOWN_COMMANDS = ["start", "config"];
+const KNOWN_COMMANDS = ["start", "config", "langs"];
 
 function looksLikePath(s: string): boolean {
   return s.includes("/") || s.includes(".") || s.startsWith("~");
@@ -578,31 +608,54 @@ function suggestCommand(input: string): string | null {
   return best?.cmd ?? null;
 }
 
-function printUsage() {
-  console.error("Usage:");
-  console.error("  ocr-now start [opts]                       # batch project's input/ folder");
-  console.error("  ocr-now <file> [opts]                      # OCR a single file in place");
-  console.error("  ocr-now config [list|get|set|unset] ...    # inspect or change settings");
-  console.error("");
-  console.error("Options:");
-  console.error("  --lang=xxx          tesseract lang code (e.g. eng, tur, tur+eng, or 'auto')");
-  console.error("  --dpi=N             rasterize PDFs at N dpi (72-600, default 300)");
-  console.error("  --pages=1-3,7       PDF only: OCR a subset of pages");
-  console.error("  --out=<path>        override output file or directory");
-  console.error("  --copy              also copy result to clipboard (pbcopy)");
-  console.error("");
-  console.error("Examples:");
-  console.error("  ocr-now config set defaultLang eng");
-  console.error("  ocr-now ~/Downloads/foo.pdf --lang=auto --copy");
-  console.error("  ocr-now start --dpi=400 --out=~/Desktop/");
+function printUsage(toStdout = false) {
+  const out = toStdout ? console.log : console.error;
+  out("Usage:");
+  out("  ocr-now start [opts]                       # batch project's input/ folder");
+  out("  ocr-now <file> [opts]                      # OCR a single file in place");
+  out("  ocr-now config [list|get|set|unset] ...    # inspect or change settings");
+  out("  ocr-now langs                              # list installed tesseract languages");
+  out("");
+  out("Options:");
+  out("  --lang=xxx          tesseract lang code (e.g. eng, tur, tur+eng, or 'auto')");
+  out("  --dpi=N             rasterize PDFs at N dpi (72-600, default 300)");
+  out("  --pages=1-3,7       PDF only: OCR a subset of pages");
+  out("  --out=<path>        override output file or directory");
+  out("  --copy              also copy result to clipboard (pbcopy)");
+  out("  -h, --help          show this help");
+  out("  -v, --version       print version");
+  out("");
+  out("Examples:");
+  out("  ocr-now config set defaultLang eng");
+  out("  ocr-now ~/Downloads/foo.pdf --lang=auto --copy");
+  out("  ocr-now start --dpi=400 --out=~/Desktop/");
+}
+
+async function langsCommand(): Promise<void> {
+  const langs = (await listInstalledLangs()).sort();
+  console.log(`installed tesseract languages (${langs.length}):`);
+  for (const l of langs) console.log(`  ${l}`);
 }
 
 async function main() {
   const { flags, positional } = parseArgs(process.argv.slice(2));
   const cmd = positional[0];
 
+  if (flags.help === true || flags.h === true) {
+    printUsage(true);
+    return;
+  }
+  if (flags.version === true || flags.v === true) {
+    console.log(pkg.version);
+    return;
+  }
+
   if (cmd === "config") {
     await configCommand(positional.slice(1));
+    return;
+  }
+  if (cmd === "langs") {
+    await langsCommand();
     return;
   }
 

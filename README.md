@@ -27,7 +27,12 @@ bun link
 ocr-now start [opts]                       # batch project's input/ folder
 ocr-now <file> [opts]                      # OCR a single file in place
 ocr-now config [list|get|set|unset] ...    # inspect or change settings
+ocr-now langs                              # list installed tesseract languages
+ocr-now -h | --help                        # show help
+ocr-now -v | --version                     # print version
 ```
+
+PDF pages are OCR'd in parallel (capped at 6 workers or your CPU core count, whichever is lower). Page order in the output file is preserved regardless of completion order.
 
 ### Batch mode
 
