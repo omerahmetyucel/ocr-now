@@ -1,0 +1,11 @@
+{
+  "name": "ocr-now",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "ocr-now": "./src/index.ts"
+  },
+  "scripts": {
+    "start": "bun src/index.ts start"
+  }
+}
