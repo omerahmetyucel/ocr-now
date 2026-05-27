@@ -21,6 +21,16 @@ export type RunOpts = {
   stdout: boolean;
 };
 
+export function validatePageRanges(ranges: PageRange[], totalPages: number): void {
+  for (const [lo, hi] of ranges) {
+    if (hi > totalPages) {
+      throw new Error(
+        `--pages range ${lo === hi ? lo : `${lo}-${hi}`} is out of bounds (PDF has ${totalPages} page${totalPages === 1 ? "" : "s"})`,
+      );
+    }
+  }
+}
+
 export function parsePages(spec: string): PageRange[] {
   const ranges: PageRange[] = [];
   for (const part of spec.split(",").map(s => s.trim()).filter(Boolean)) {
@@ -230,6 +240,11 @@ export async function processFile(
   const size = fmtBytes((await stat(path)).size);
   console.log(`ocr    ${label}  [${kind}, ${size}]`);
   const t0 = performance.now();
+
+  if (kind === "pdf" && opts.pageRanges) {
+    const totalPages = await getPdfPageCount(path);
+    validatePageRanges(opts.pageRanges, totalPages);
+  }
 
   // PDF shortcut: if the PDF has embedded text on all selected pages, use it directly.
   if (kind === "pdf") {

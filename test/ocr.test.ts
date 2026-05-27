@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parsePages, planRasterTasks } from "../src/ocr";
+import { parsePages, planRasterTasks, validatePageRanges } from "../src/ocr";
 
 describe("parsePages", () => {
   test("single page", () => {
@@ -36,6 +36,27 @@ describe("parsePages", () => {
   test("rejects empty input", () => {
     expect(() => parsePages("")).toThrow(/requires a value/);
     expect(() => parsePages(",,")).toThrow(/requires a value/);
+  });
+});
+
+describe("validatePageRanges", () => {
+  test("in-bounds ranges pass", () => {
+    expect(() => validatePageRanges([[1, 3], [5, 5]], 10)).not.toThrow();
+  });
+  test("range matching last page passes", () => {
+    expect(() => validatePageRanges([[1, 10]], 10)).not.toThrow();
+  });
+  test("upper bound exceeds total", () => {
+    expect(() => validatePageRanges([[1, 11]], 10)).toThrow(/out of bounds.*10 pages/);
+  });
+  test("single page beyond total", () => {
+    expect(() => validatePageRanges([[15, 15]], 10)).toThrow(/range 15.*out of bounds/);
+  });
+  test("singular pluralization", () => {
+    expect(() => validatePageRanges([[2, 2]], 1)).toThrow(/1 page\)/);
+  });
+  test("empty ranges pass trivially", () => {
+    expect(() => validatePageRanges([], 10)).not.toThrow();
   });
 });
 
