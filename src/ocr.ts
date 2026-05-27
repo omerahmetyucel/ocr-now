@@ -129,7 +129,28 @@ async function ocrPdf(
   }
 }
 
-async function detectLang(path: string, kind: "pdf" | "img"): Promise<string> {
+async function detectFromSample(sample: string): Promise<string> {
+  const baseline = await pickAutoBaseline();
+  const cleaned = sample.trim();
+  if (cleaned.length < AUTO_MIN_SAMPLE_CHARS) {
+    console.log(`auto   sample too short (${cleaned.length} chars), falling back to ${baseline}`);
+    return baseline;
+  }
+  const installed = new Set(await listInstalledLangs());
+  const ranked = francAll(cleaned)
+    .map(([code, score]) => [FRANC_TO_TESS[code] ?? code, score] as [string, number])
+    .filter(([code, score]) => installed.has(code) && score > 0);
+  if (ranked.length === 0) {
+    console.log(`auto   no installed language matched detection, falling back to ${baseline}`);
+    return baseline;
+  }
+  const [primary, secondary] = ranked;
+  const tail = secondary ? `  (runner-up: ${secondary[0]} ${secondary[1].toFixed(2)})` : "";
+  console.log(`auto   detected: ${primary[0]} ${primary[1].toFixed(2)}${tail} → --lang=${primary[0]}`);
+  return primary[0];
+}
+
+async function detectLangFromImage(path: string, kind: "pdf" | "img"): Promise<string> {
   const baseline = await pickAutoBaseline();
   console.log(`auto   sampling ${kind === "pdf" ? "first page" : "image"} (${AUTO_DETECTION_DPI} dpi, ${baseline} baseline)`);
 
@@ -152,26 +173,46 @@ async function detectLang(path: string, kind: "pdf" | "img"): Promise<string> {
     }
   }
 
-  const cleaned = sampleText.trim();
-  if (cleaned.length < AUTO_MIN_SAMPLE_CHARS) {
-    console.log(`auto   sample too short (${cleaned.length} chars), falling back to ${baseline}`);
-    return baseline;
+  return detectFromSample(sampleText);
+}
+
+async function tryExtractText(
+  path: string,
+  pageRanges: PageRange[] | null,
+): Promise<{ text: string; pages: number } | null> {
+  const t0 = performance.now();
+  const { stdout, exitCode } = await run(["pdftotext", path, "-"]);
+  if (exitCode !== 0) return null;
+
+  const allPages = stdout.split("\f");
+  if (allPages[allPages.length - 1] === "") allPages.pop();
+  if (allPages.length === 0) return null;
+
+  const selected: { num: number; text: string }[] = [];
+  if (pageRanges) {
+    for (const [lo, hi] of pageRanges) {
+      for (let n = lo; n <= hi; n++) {
+        if (n >= 1 && n <= allPages.length) selected.push({ num: n, text: allPages[n - 1] });
+      }
+    }
+  } else {
+    allPages.forEach((text, i) => selected.push({ num: i + 1, text }));
   }
+  if (selected.length === 0) return null;
 
-  const installed = new Set(await listInstalledLangs());
-  const ranked = francAll(cleaned)
-    .map(([code, score]) => [FRANC_TO_TESS[code] ?? code, score] as [string, number])
-    .filter(([code, score]) => installed.has(code) && score > 0);
+  // Conservative: every selected page must carry meaningful text.
+  // Otherwise (likely a scan, or hybrid PDF with image pages) fall through to OCR.
+  const MIN_CHARS_PER_PAGE = 50;
+  if (!selected.every(p => p.text.trim().length >= MIN_CHARS_PER_PAGE)) return null;
 
-  if (ranked.length === 0) {
-    console.log(`auto   no installed language matched detection, falling back to ${baseline}`);
-    return baseline;
-  }
+  const totalChars = selected.reduce((acc, p) => acc + p.text.trim().length, 0);
+  const dt = ((performance.now() - t0) / 1000).toFixed(2);
+  console.log(`       text-embedded PDF: extracted ${totalChars} chars across ${selected.length} page${selected.length === 1 ? "" : "s"} (${dt}s, no OCR needed)`);
 
-  const [primary, secondary] = ranked;
-  const tail = secondary ? `  (runner-up: ${secondary[0]} ${secondary[1].toFixed(2)})` : "";
-  console.log(`auto   detected: ${primary[0]} ${primary[1].toFixed(2)}${tail} → --lang=${primary[0]}`);
-  return primary[0];
+  const text = selected
+    .map(p => `--- Page ${p.num} ---\n${p.text.trim()}`)
+    .join("\n\n");
+  return { text, pages: selected.length };
 }
 
 export async function processFile(
@@ -185,7 +226,18 @@ export async function processFile(
   console.log(`ocr    ${label}  [${kind}, ${size}]`);
   const t0 = performance.now();
 
-  const lang = opts.lang === AUTO ? await detectLang(path, kind) : opts.lang;
+  // PDF shortcut: if the PDF has embedded text on all selected pages, use it directly.
+  if (kind === "pdf") {
+    const extracted = await tryExtractText(path, opts.pageRanges);
+    if (extracted) {
+      const lang = opts.lang === AUTO ? await detectFromSample(extracted.text) : opts.lang;
+      const dt = ((performance.now() - t0) / 1000).toFixed(1);
+      console.log(`done   ${label}  lang=${lang}  pages=${extracted.pages}  chars=${extracted.text.length}  took=${dt}s`);
+      return { text: extracted.text, pages: extracted.pages, kind, lang };
+    }
+  }
+
+  const lang = opts.lang === AUTO ? await detectLangFromImage(path, kind) : opts.lang;
 
   let text: string;
   let pages = 1;

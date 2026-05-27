@@ -36,6 +36,8 @@ ocr-now -v | --version                     # print version
 
 PDF pages are OCR'd in parallel (capped at 6 workers or your CPU core count, whichever is lower). Page order in the output file is preserved regardless of completion order.
 
+If a PDF has embedded text on every selected page (most digitally-generated PDFs do), `ocr-now` extracts it directly via `pdftotext` and skips OCR entirely — a 144-page text PDF goes from ~75s to <1s. Scanned PDFs still go through the OCR pipeline.
+
 ### Batch mode
 
 Drop PDFs/images into `input/`, then:
