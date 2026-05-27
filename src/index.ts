@@ -470,6 +470,40 @@ function flagStr(v: string | true | undefined): string | undefined {
   return typeof v === "string" ? v : undefined;
 }
 
+const KNOWN_COMMANDS = ["start", "config"];
+
+function looksLikePath(s: string): boolean {
+  return s.includes("/") || s.includes(".") || s.startsWith("~");
+}
+
+function levenshtein(a: string, b: string): number {
+  const m = a.length, n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+  const dp: number[] = Array(n + 1);
+  for (let j = 0; j <= n; j++) dp[j] = j;
+  for (let i = 1; i <= m; i++) {
+    let prev = dp[0];
+    dp[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const tmp = dp[j];
+      dp[j] = a[i - 1] === b[j - 1] ? prev : Math.min(prev, dp[j], dp[j - 1]) + 1;
+      prev = tmp;
+    }
+  }
+  return dp[n];
+}
+
+function suggestCommand(input: string): string | null {
+  const lower = input.toLowerCase();
+  let best: { cmd: string; dist: number } | null = null;
+  for (const cmd of KNOWN_COMMANDS) {
+    const d = levenshtein(lower, cmd);
+    if (d <= 2 && (!best || d < best.dist)) best = { cmd, dist: d };
+  }
+  return best?.cmd ?? null;
+}
+
 function printUsage() {
   console.error("Usage:");
   console.error("  ocr-now start [opts]                       # batch project's input/ folder");
@@ -513,8 +547,17 @@ async function main() {
 
   if (cmd === "start") {
     await start(opts);
-  } else {
+  } else if (looksLikePath(cmd)) {
     await single(cmd, opts);
+  } else {
+    const hint = suggestCommand(cmd);
+    if (hint) {
+      console.error(`unknown command "${cmd}". Did you mean "${hint}"?`);
+    } else {
+      console.error(`unknown command "${cmd}". Available: ${KNOWN_COMMANDS.join(", ")}.`);
+      console.error(`To OCR a file, pass a path containing "/" or a file extension (e.g. ./${cmd}.pdf).`);
+    }
+    process.exit(1);
   }
 }
 
