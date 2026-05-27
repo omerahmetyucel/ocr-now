@@ -24,6 +24,7 @@ function printUsage(toStdout = false) {
   out("  --pages=1-3,7       PDF only: OCR a subset of pages");
   out("  --out=<path>        override output file or directory");
   out("  --copy              also copy result to clipboard (pbcopy)");
+  out("  --stdout            write result to stdout instead of a file (for piping)");
   out("  -h, --help          show this help");
   out("  -v, --version       print version");
   out("");
@@ -120,13 +121,21 @@ async function main() {
     process.exit(1);
   }
 
+  const stdout = flags.stdout === true;
+  if (stdout) {
+    // Route all status logs to stderr so stdout carries only the OCR text.
+    // Also force non-TTY so spinner/progress bar don't paint into stdout.
+    (process.stdout as { isTTY?: boolean }).isTTY = false;
+    console.log = (...args: unknown[]) => console.error(...(args as Parameters<typeof console.error>));
+  }
+
   const lang = await resolveLang(flagStr(flags.lang));
   const dpi = await resolveDpi(flagStr(flags.dpi));
   const pageRanges = flagStr(flags.pages) ? parsePages(flagStr(flags.pages)!) : null;
   const outFlag = flagStr(flags.out);
   const copy = Boolean(flags.copy);
 
-  const opts: RunOpts = { lang, dpi, pageRanges, outFlag, copy };
+  const opts: RunOpts = { lang, dpi, pageRanges, outFlag, copy, stdout };
 
   if (cmd === "start") {
     await start(opts);

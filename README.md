@@ -67,6 +67,7 @@ Filenames with spaces or special chars: quote them, or use tab completion.
 | `--pages=1-3,7` | PDF only. OCR a subset of pages. Non-contiguous allowed |
 | `--out=<path>` | Override output. Treated as a directory if it ends in `/` or already exists as one; otherwise as a file path |
 | `--copy` | Also copy result to clipboard. macOS only (uses `pbcopy`) |
+| `--stdout` | Write result to stdout instead of a file. Status logs go to stderr so output pipes cleanly: `ocr-now foo.pdf --stdout \| grep keyword` |
 
 All stackable. Example:
 

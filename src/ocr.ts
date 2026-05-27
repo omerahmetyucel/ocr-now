@@ -18,6 +18,7 @@ export type RunOpts = {
   pageRanges: PageRange[] | null;
   outFlag?: string;
   copy: boolean;
+  stdout: boolean;
 };
 
 export function parsePages(spec: string): PageRange[] {
@@ -115,10 +116,10 @@ async function ocrPdf(
       const text = await ocrImage(join(tmp, name), lang);
       done++;
       renderBar(done, pngs.length, tOcr);
-      if (!isTty) console.log(`         page ${pageNumOf(name) || "?"} done (${done}/${pngs.length})`);
+      if (!isTty()) console.log(`         page ${pageNumOf(name) || "?"} done (${done}/${pngs.length})`);
       return text;
     });
-    if (isTty) process.stdout.write("\n");
+    if (isTty()) process.stdout.write("\n");
     const parts = pngs.map((name, i) => {
       const pageNum = pageNumOf(name) || i + 1;
       return `--- Page ${pageNum} ---\n${texts[i].trim()}`;

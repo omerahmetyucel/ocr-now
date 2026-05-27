@@ -1,7 +1,9 @@
-export const isTty = Boolean(process.stdout.isTTY);
+export function isTty(): boolean {
+  return Boolean(process.stdout.isTTY);
+}
 
 export function startSpinner(label: string): () => void {
-  if (!isTty) {
+  if (!isTty()) {
     console.log(`       ${label}...`);
     return () => {};
   }
@@ -21,7 +23,7 @@ export function startSpinner(label: string): () => void {
 }
 
 export function renderBar(done: number, total: number, t0: number) {
-  if (!isTty) return;
+  if (!isTty()) return;
   const width = 24;
   const filled = Math.round((done / total) * width);
   const bar = "█".repeat(filled) + "░".repeat(width - filled);

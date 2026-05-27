@@ -67,14 +67,20 @@ export async function start(opts: RunOpts) {
     process.exit(1);
   }
 
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-  const filenameLang = opts.lang === AUTO ? "AUTO" : opts.lang.toUpperCase();
-  const defaultPath = join(outputDir, `ocr-now ${filenameLang} ${stamp}.txt`);
-  const outPath = await resolveOutPath(opts.outFlag, defaultPath);
   const body = sections.join("\n");
-  await writeFile(outPath, body);
   const totalDt = ((performance.now() - runStart) / 1000).toFixed(1);
-  console.log(`wrote  ${outPath}  (${fmtBytes(body.length)}, ${totalPages} page${totalPages === 1 ? "" : "s"}, ${totalDt}s total)`);
+
+  if (opts.stdout) {
+    process.stdout.write(body);
+    console.log(`done   ${fmtBytes(body.length)}, ${totalPages} page${totalPages === 1 ? "" : "s"}, ${totalDt}s total (→ stdout)`);
+  } else {
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    const filenameLang = opts.lang === AUTO ? "AUTO" : opts.lang.toUpperCase();
+    const defaultPath = join(outputDir, `ocr-now ${filenameLang} ${stamp}.txt`);
+    const outPath = await resolveOutPath(opts.outFlag, defaultPath);
+    await writeFile(outPath, body);
+    console.log(`wrote  ${outPath}  (${fmtBytes(body.length)}, ${totalPages} page${totalPages === 1 ? "" : "s"}, ${totalDt}s total)`);
+  }
 
   if (opts.copy) {
     await copyToClipboard(body);
@@ -99,12 +105,18 @@ export async function single(arg: string, opts: RunOpts) {
   const runStart = performance.now();
   const name = basename(path);
   const { text, pages, lang } = await processFile(path, name, opts);
-  const stem = name.slice(0, name.length - extname(name).length);
-  const defaultPath = join(dirname(path), `ocr-now ${lang.toUpperCase()} ${stem}.txt`);
-  const outPath = await resolveOutPath(opts.outFlag, defaultPath);
-  await writeFile(outPath, text);
   const totalDt = ((performance.now() - runStart) / 1000).toFixed(1);
-  console.log(`wrote  ${outPath}  (${fmtBytes(text.length)}, ${pages} page${pages === 1 ? "" : "s"}, ${totalDt}s total)`);
+
+  if (opts.stdout) {
+    process.stdout.write(text);
+    console.log(`done   ${fmtBytes(text.length)}, ${pages} page${pages === 1 ? "" : "s"}, ${totalDt}s total (→ stdout)`);
+  } else {
+    const stem = name.slice(0, name.length - extname(name).length);
+    const defaultPath = join(dirname(path), `ocr-now ${lang.toUpperCase()} ${stem}.txt`);
+    const outPath = await resolveOutPath(opts.outFlag, defaultPath);
+    await writeFile(outPath, text);
+    console.log(`wrote  ${outPath}  (${fmtBytes(text.length)}, ${pages} page${pages === 1 ? "" : "s"}, ${totalDt}s total)`);
+  }
 
   if (opts.copy) {
     await copyToClipboard(text);
