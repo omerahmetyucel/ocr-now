@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { francAll } from "franc-min";
 import { loadConfig } from "./config";
 import { listInstalledLangs, pickAutoBaseline } from "./lang";
-import { PromiseQueue, run, runPool } from "./shell";
+import { PromiseQueue, run, runPool, trackTempDir, untrackTempDir } from "./shell";
 import { isTty, renderBar, startSpinner } from "./tty";
 import {
   AUTO, AUTO_DETECTION_DPI, AUTO_MIN_CONFIDENCE, AUTO_MIN_SAMPLE_CHARS,
@@ -136,6 +136,7 @@ async function ocrPdf(
   pageRanges: PageRange[] | null,
 ): Promise<{ pages: PageText[] }> {
   const tmp = await mkdtemp(join(tmpdir(), "ocr-now-"));
+  trackTempDir(tmp);
   try {
     const effRanges: PageRange[] = pageRanges ?? [[1, await getPdfPageCount(path)]];
     const tasks = planRasterTasks(effRanges, CONCURRENCY);
@@ -194,6 +195,7 @@ async function ocrPdf(
     console.log(`       processed ${pages.length} page${pages.length === 1 ? "" : "s"} in ${dt}s`);
     return { pages };
   } finally {
+    untrackTempDir(tmp);
     await rm(tmp, { recursive: true, force: true });
   }
 }
@@ -235,6 +237,7 @@ async function detectLangFromImage(path: string, kind: "pdf" | "img"): Promise<s
     sampleText = await ocrImage(path, baseline);
   } else {
     const tmp = await mkdtemp(join(tmpdir(), "ocr-now-auto-"));
+    trackTempDir(tmp);
     try {
       const { exitCode, stderr } = await run([
         "pdftoppm", "-r", AUTO_DETECTION_DPI, "-png", "-f", "1", "-l", "1",
@@ -245,6 +248,7 @@ async function detectLangFromImage(path: string, kind: "pdf" | "img"): Promise<s
       if (pngs.length === 0) throw new Error(`pdftoppm produced no pages for auto-detect`);
       sampleText = await ocrImage(join(tmp, pngs[0]), baseline);
     } finally {
+      untrackTempDir(tmp);
       await rm(tmp, { recursive: true, force: true });
     }
   }
@@ -291,16 +295,23 @@ async function tryExtractText(
     else ambiguous.push(p);
   }
 
-  // Pages that returned <50 chars could be genuine scans OR legitimately
-  // short digital pages (continuation pages, section dividers). Use
-  // pdfimages to see whether the page actually contains a raster image —
-  // if not, trust pdftotext's output regardless of length.
+  // Pages that returned <50 chars could be:
+  //   (a) genuine scans (raster image, no embedded text)
+  //   (b) legitimately short digital pages (continuation, section divider)
+  //   (c) vector-content pages with no raster image and no extractable text
+  //       (a flowchart with rendered labels, a chart with axis text)
+  // Use pdfimages to detect raster content. If a page has no image and
+  // some extracted text, trust pdftotext. If it has neither image nor
+  // text, OCR it anyway since vector text would otherwise slip through.
   const needsOcr: number[] = [];
   if (ambiguous.length > 0) {
     const imagePages = await pagesWithImages(path);
     for (const p of ambiguous) {
-      if (imagePages === null || imagePages.has(p.num)) needsOcr.push(p.num);
-      else extracted.push(p);
+      const hasImage = imagePages !== null && imagePages.has(p.num);
+      const hasSomeText = p.text.trim().length > 0;
+      if (imagePages === null || hasImage) needsOcr.push(p.num);
+      else if (hasSomeText) extracted.push(p);
+      else needsOcr.push(p.num);
     }
   }
 

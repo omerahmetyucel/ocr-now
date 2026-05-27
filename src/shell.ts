@@ -1,4 +1,35 @@
+import { rmSync } from "node:fs";
+
 export type RunResult = { stdout: string; stderr: string; exitCode: number };
+
+// JS finally blocks don't fire on SIGINT/SIGTERM, so mkdtemp'd directories
+// leak on Ctrl+C mid-run (especially painful at high DPI where pdftoppm
+// drops hundreds of MB into /tmp). Track active temp dirs and remove
+// them synchronously from a signal handler.
+const activeTempDirs = new Set<string>();
+let signalsInstalled = false;
+
+function installSignalHandlers(): void {
+  signalsInstalled = true;
+  const cleanup = (code: number) => {
+    for (const dir of activeTempDirs) {
+      try { rmSync(dir, { recursive: true, force: true }); } catch {}
+    }
+    activeTempDirs.clear();
+    process.exit(code);
+  };
+  process.on("SIGINT", () => cleanup(130));
+  process.on("SIGTERM", () => cleanup(143));
+}
+
+export function trackTempDir(path: string): void {
+  if (!signalsInstalled) installSignalHandlers();
+  activeTempDirs.add(path);
+}
+
+export function untrackTempDir(path: string): void {
+  activeTempDirs.delete(path);
+}
 
 const INSTALL_HINTS: Record<string, string> = {
   tesseract: "brew install tesseract tesseract-lang",
