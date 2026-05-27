@@ -6,7 +6,7 @@ Thin Bun CLI over Tesseract. Takes PDFs and images, dumps text. Defaults to Turk
 
 - [Bun](https://bun.sh)
 - Tesseract + language data
-- Poppler (for `pdftoppm`)
+- Poppler (for `pdftoppm`, `pdfinfo`, `pdftotext`, `pdfimages`)
 
 ```
 brew install tesseract tesseract-lang poppler
@@ -114,7 +114,7 @@ Sample-pass baseline picks your configured `defaultLang` if set (so Turkish diac
 
 Notes:
 - Picks the single best match. If your doc is genuinely bilingual, pass `--lang=tur+eng` explicitly. Single-pass detection isn't suited to multi-language inference.
-- Falls back to the baseline if the sample text is too short, no installed language matches, or detection confidence is below 0.2.
+- Falls back to the baseline if the sample text is too short, no installed language matches, or detection confidence is below the `autoMinConfidence` threshold (default `0.2`).
 - Detected language is shown per file and used in the output filename. Batch-mode combined output uses `AUTO` in the filename since files may differ; the per-file section header (`[LANG]`) shows what was actually used.
 
 ## Languages
@@ -147,7 +147,7 @@ Single-file mode skips the `========` header (single source).
 | Tool | License | Link |
 |---|---|---|
 | [Tesseract](https://github.com/tesseract-ocr/tesseract) | Apache 2.0 | invoked as a subprocess |
-| [Poppler](https://poppler.freedesktop.org/) (`pdftoppm`, `pdfinfo`, `pdftotext`) | GPL | invoked as a subprocess |
+| [Poppler](https://poppler.freedesktop.org/) (`pdftoppm`, `pdfinfo`, `pdftotext`, `pdfimages`) | GPL | invoked as a subprocess |
 | [franc-min](https://github.com/wooorm/franc) | MIT | npm dependency |
 
 
