@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { francAll } from "franc-min";
 import { loadConfig } from "./config";
 import { listInstalledLangs, pickAutoBaseline } from "./lang";
-import { run, runPool } from "./shell";
+import { PromiseQueue, run, runPool } from "./shell";
 import { isTty, renderBar, startSpinner } from "./tty";
 import {
   AUTO, AUTO_DETECTION_DPI, AUTO_MIN_CONFIDENCE, AUTO_MIN_SAMPLE_CHARS,
@@ -116,47 +116,59 @@ async function ocrPdf(
   try {
     const effRanges: PageRange[] = pageRanges ?? [[1, await getPdfPageCount(path)]];
     const tasks = planRasterTasks(effRanges, CONCURRENCY);
+    const totalPages = effRanges.reduce((acc, [a, b]) => acc + (b - a + 1), 0);
     const rangeLabel = pageRanges
-      ? `rasterizing pdf (pages ${pageRanges.map(([a, b]) => a === b ? `${a}` : `${a}-${b}`).join(",")})`
-      : "rasterizing pdf";
-    const stopSpinner = startSpinner(rangeLabel);
-    const tRast = performance.now();
-    const prefix = join(tmp, "page");
-    const baseArgs = ["pdftoppm", "-r", String(dpi), "-png"];
+      ? `pages ${pageRanges.map(([a, b]) => a === b ? `${a}` : `${a}-${b}`).join(",")}`
+      : `${totalPages} page${totalPages === 1 ? "" : "s"}`;
+    console.log(`       ocr pipeline (rasterize + recognize in parallel, ${rangeLabel}) @ ${dpi} dpi`);
+
+    const queue = new PromiseQueue<string>();
+    const pages: PageText[] = [];
+    const tStart = performance.now();
+    let done = 0;
+    renderBar(0, totalPages, tStart);
+    // Keep the bar's elapsed time moving during the initial bootstrap period
+    // before the first PNG lands. Cleared once OCR is finished.
+    const heartbeat = isTty() ? setInterval(() => renderBar(done, totalPages, tStart), 250) : null;
+
+    const ocrWorkers = Array.from({ length: CONCURRENCY }, async () => {
+      while (true) {
+        const name = await queue.take();
+        if (!name) break;
+        const text = await ocrImage(join(tmp, name), lang);
+        pages.push({ num: pageNumOf(name) || 0, text });
+        done++;
+        renderBar(done, totalPages, tStart);
+        if (!isTty()) console.log(`         page ${pageNumOf(name) || "?"} done (${done}/${totalPages})`);
+      }
+    });
 
     try {
       await runPool(tasks, CONCURRENCY, async ([lo, hi]) => {
         const { exitCode, stderr } = await run([
-          ...baseArgs, "-f", String(lo), "-l", String(hi), path, prefix,
+          "pdftoppm", "-r", String(dpi), "-png", "-f", String(lo), "-l", String(hi),
+          path, join(tmp, "page"),
         ]);
         if (exitCode !== 0) throw new Error(`pdftoppm failed: ${stderr.trim()}`);
+        // After this chunk's pdftoppm exits, its PNGs are fully written.
+        // Enqueue them for OCR. The lo/hi filter prevents double-pushing
+        // files produced by other chunks that happen to be visible here.
+        const all = await readdir(tmp);
+        for (const f of all) {
+          const n = pageNumOf(f);
+          if (n >= lo && n <= hi && f.endsWith(".png")) queue.push(f);
+        }
       });
     } finally {
-      stopSpinner();
+      queue.close();
     }
-
-    const pngs = (await readdir(tmp))
-      .filter(f => f.endsWith(".png"))
-      .sort((a, b) => pageNumOf(a) - pageNumOf(b));
-    if (pngs.length === 0) throw new Error(`pdftoppm produced no pages (range out of bounds?)`);
-    const rastDt = ((performance.now() - tRast) / 1000).toFixed(1);
-    console.log(`       rasterized ${pngs.length} page${pngs.length === 1 ? "" : "s"} @ ${dpi} dpi (${rastDt}s)`);
-
-    const tOcr = performance.now();
-    let done = 0;
-    renderBar(0, pngs.length, tOcr);
-    const texts = await runPool(pngs, CONCURRENCY, async name => {
-      const text = await ocrImage(join(tmp, name), lang);
-      done++;
-      renderBar(done, pngs.length, tOcr);
-      if (!isTty()) console.log(`         page ${pageNumOf(name) || "?"} done (${done}/${pngs.length})`);
-      return text;
-    });
+    await Promise.all(ocrWorkers);
+    if (heartbeat) clearInterval(heartbeat);
     if (isTty()) process.stdout.write("\n");
-    const pages: PageText[] = pngs.map((name, i) => ({
-      num: pageNumOf(name) || i + 1,
-      text: texts[i],
-    }));
+
+    if (pages.length === 0) throw new Error(`pdftoppm produced no pages (range out of bounds?)`);
+    const dt = ((performance.now() - tStart) / 1000).toFixed(1);
+    console.log(`       processed ${pages.length} page${pages.length === 1 ? "" : "s"} in ${dt}s`);
     return { pages };
   } finally {
     await rm(tmp, { recursive: true, force: true });

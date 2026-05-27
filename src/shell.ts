@@ -56,6 +56,31 @@ export async function runPool<T, R>(
   return results;
 }
 
+// A single-producer / multi-consumer queue used to stream rasterized PNGs
+// into the OCR pool as soon as each pdftoppm chunk completes.
+export class PromiseQueue<T> {
+  private items: T[] = [];
+  private waiters: Array<(item: T | undefined) => void> = [];
+  private closed = false;
+
+  push(item: T): void {
+    const waiter = this.waiters.shift();
+    if (waiter) waiter(item);
+    else this.items.push(item);
+  }
+
+  close(): void {
+    this.closed = true;
+    while (this.waiters.length) this.waiters.shift()!(undefined);
+  }
+
+  async take(): Promise<T | undefined> {
+    if (this.items.length) return this.items.shift();
+    if (this.closed) return undefined;
+    return new Promise(resolve => this.waiters.push(resolve));
+  }
+}
+
 export async function copyToClipboard(text: string): Promise<void> {
   const proc = Bun.spawn(["pbcopy"], { stdin: new Blob([text]) });
   const exitCode = await proc.exited;
