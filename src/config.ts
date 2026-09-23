@@ -21,10 +21,17 @@ export function isValidKey(k: string): k is ConfigKey {
 }
 
 export async function loadConfig(): Promise<Config> {
+  let raw: string;
   try {
-    return JSON.parse(await readFile(CONFIG_PATH, "utf8"));
+    raw = await readFile(CONFIG_PATH, "utf8");
+  } catch (e) {
+    if ((e as { code?: string })?.code === "ENOENT") return {};
+    throw e;
+  }
+  try {
+    return JSON.parse(raw);
   } catch {
-    return {};
+    throw new Error(`${CONFIG_PATH} is not valid JSON. Fix or delete it.`);
   }
 }
 
@@ -56,5 +63,5 @@ export function validateSampleChars(value: string | number): number {
 export async function resolveDpi(override: string | undefined): Promise<number> {
   if (override !== undefined && override !== "") return validateDpi(override);
   const cfg = await loadConfig();
-  return cfg.defaultDpi ?? HARDCODED_DEFAULT_DPI;
+  return cfg.defaultDpi !== undefined ? validateDpi(cfg.defaultDpi) : HARDCODED_DEFAULT_DPI;
 }

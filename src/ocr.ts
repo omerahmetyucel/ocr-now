@@ -2,7 +2,7 @@ import { mkdtemp, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { francAll } from "franc-min";
-import { loadConfig } from "./config";
+import { loadConfig, validateConfidence, validateSampleChars } from "./config";
 import { listInstalledLangs, pickAutoBaseline } from "./lang";
 import { PromiseQueue, run, runPool, trackTempDir, untrackTempDir } from "./shell";
 import { isTty, renderBar, startSpinner } from "./tty";
@@ -214,8 +214,8 @@ async function ocrPdf(
 async function detectFromSample(sample: string): Promise<string> {
   const baseline = await pickAutoBaseline();
   const cfg = await loadConfig();
-  const minSampleChars = cfg.autoMinSampleChars ?? AUTO_MIN_SAMPLE_CHARS;
-  const minConfidence = cfg.autoMinConfidence ?? AUTO_MIN_CONFIDENCE;
+  const minSampleChars = cfg.autoMinSampleChars !== undefined ? validateSampleChars(cfg.autoMinSampleChars) : AUTO_MIN_SAMPLE_CHARS;
+  const minConfidence = cfg.autoMinConfidence !== undefined ? validateConfidence(cfg.autoMinConfidence) : AUTO_MIN_CONFIDENCE;
   const cleaned = sample.trim();
   if (cleaned.length < minSampleChars) {
     console.log(`auto   sample too short (${cleaned.length} chars), falling back to ${baseline}`);
