@@ -112,11 +112,11 @@ async function main() {
   const { flags, positional } = parseArgs(process.argv.slice(2));
   const cmd = positional[0];
 
-  if (flags.help === true || flags.h === true) {
+  if (flags.help === true) {
     printUsage(true);
     return;
   }
-  if (flags.version === true || flags.v === true) {
+  if (flags.version === true) {
     console.log(pkg.version);
     return;
   }

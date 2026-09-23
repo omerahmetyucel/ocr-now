@@ -81,7 +81,7 @@ export async function start(opts: RunOpts) {
 
   if (opts.stdout) {
     process.stdout.write(body);
-    console.log(`done   ${fmtBytes(body.length)}, ${totalPages} page${totalPages === 1 ? "" : "s"}, ${totalDt}s total (→ stdout)`);
+    console.log(`done   ${fmtBytes(Buffer.byteLength(body))}, ${totalPages} page${totalPages === 1 ? "" : "s"}, ${totalDt}s total (→ stdout)`);
   } else {
     const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
     const filenameLang = opts.lang === AUTO ? "AUTO" : opts.lang.toUpperCase();
@@ -89,7 +89,7 @@ export async function start(opts: RunOpts) {
     const defaultPath = join(outputDir, `ocr-now ${filenameLang} ${stamp}.${ext}`);
     const outPath = await resolveOutPath(opts.outFlag, defaultPath);
     await writeFile(outPath, body);
-    console.log(`wrote  ${outPath}  (${fmtBytes(body.length)}, ${totalPages} page${totalPages === 1 ? "" : "s"}, ${totalDt}s total)`);
+    console.log(`wrote  ${outPath}  (${fmtBytes(Buffer.byteLength(body))}, ${totalPages} page${totalPages === 1 ? "" : "s"}, ${totalDt}s total)`);
   }
 
   if (opts.copy) {
@@ -123,14 +123,14 @@ export async function single(arg: string, opts: RunOpts) {
 
   if (opts.stdout) {
     process.stdout.write(body);
-    console.log(`done   ${fmtBytes(body.length)}, ${pages} page${pages === 1 ? "" : "s"}, ${totalDt}s total (→ stdout)`);
+    console.log(`done   ${fmtBytes(Buffer.byteLength(body))}, ${pages} page${pages === 1 ? "" : "s"}, ${totalDt}s total (→ stdout)`);
   } else {
     const stem = name.slice(0, name.length - extname(name).length);
     const ext = opts.json ? "json" : "txt";
     const defaultPath = join(dirname(path), `ocr-now ${lang.toUpperCase()} ${stem}.${ext}`);
     const outPath = await resolveOutPath(opts.outFlag, defaultPath);
     await writeFile(outPath, body);
-    console.log(`wrote  ${outPath}  (${fmtBytes(body.length)}, ${pages} page${pages === 1 ? "" : "s"}, ${totalDt}s total)`);
+    console.log(`wrote  ${outPath}  (${fmtBytes(Buffer.byteLength(body))}, ${pages} page${pages === 1 ? "" : "s"}, ${totalDt}s total)`);
   }
 
   if (opts.copy) {
