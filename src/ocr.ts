@@ -167,28 +167,38 @@ async function ocrPdf(
         if (!isTty()) console.log(`         page ${pageNumOf(name) || "?"} done (${done}/${totalPages})`);
       }
     });
+    // Attach a rejection handler immediately (not just when we later await
+    // it) so a worker failure (e.g. tesseract erroring on a page) doesn't
+    // become an unhandled rejection while runPool is still rasterizing —
+    // that would kill the process before the outer finally runs and leak
+    // this temp dir. The real error still surfaces below via `await ocrDone`.
+    const ocrDone = Promise.all(ocrWorkers);
+    ocrDone.catch(() => {});
 
     try {
-      await runPool(tasks, CONCURRENCY, async ([lo, hi]) => {
-        const { exitCode, stderr } = await run([
-          "pdftoppm", "-r", String(dpi), "-png", "-f", String(lo), "-l", String(hi),
-          path, join(tmp, "page"),
-        ]);
-        if (exitCode !== 0) throw new Error(`pdftoppm failed: ${stderr.trim()}`);
-        // After this chunk's pdftoppm exits, its PNGs are fully written.
-        // Enqueue them for OCR. The lo/hi filter prevents double-pushing
-        // files produced by other chunks that happen to be visible here.
-        const all = await readdir(tmp);
-        for (const f of all) {
-          const n = pageNumOf(f);
-          if (n >= lo && n <= hi && f.endsWith(".png")) queue.push(f);
-        }
-      });
+      try {
+        await runPool(tasks, CONCURRENCY, async ([lo, hi]) => {
+          const { exitCode, stderr } = await run([
+            "pdftoppm", "-r", String(dpi), "-png", "-f", String(lo), "-l", String(hi),
+            path, join(tmp, "page"),
+          ]);
+          if (exitCode !== 0) throw new Error(`pdftoppm failed: ${stderr.trim()}`);
+          // After this chunk's pdftoppm exits, its PNGs are fully written.
+          // Enqueue them for OCR. The lo/hi filter prevents double-pushing
+          // files produced by other chunks that happen to be visible here.
+          const all = await readdir(tmp);
+          for (const f of all) {
+            const n = pageNumOf(f);
+            if (n >= lo && n <= hi && f.endsWith(".png")) queue.push(f);
+          }
+        });
+      } finally {
+        queue.close();
+      }
+      await ocrDone;
     } finally {
-      queue.close();
+      if (heartbeat) clearInterval(heartbeat);
     }
-    await Promise.all(ocrWorkers);
-    if (heartbeat) clearInterval(heartbeat);
     if (isTty()) process.stdout.write("\n");
 
     if (pages.length === 0) throw new Error(`pdftoppm produced no pages (range out of bounds?)`);
