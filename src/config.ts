@@ -20,7 +20,12 @@ export function isValidKey(k: string): k is ConfigKey {
   return (VALID_CONFIG_KEYS as readonly string[]).includes(k);
 }
 
-export async function loadConfig(): Promise<Config> {
+// config.json doesn't change mid-run, so cache the read across the many
+// calls a single OCR run makes (loadConfig is called several times per
+// file in --lang=auto mode).
+let configCache: Promise<Config> | null = null;
+
+async function readConfigFile(): Promise<Config> {
   let raw: string;
   try {
     raw = await readFile(CONFIG_PATH, "utf8");
@@ -35,8 +40,14 @@ export async function loadConfig(): Promise<Config> {
   }
 }
 
+export async function loadConfig(): Promise<Config> {
+  if (!configCache) configCache = readConfigFile();
+  return configCache;
+}
+
 export async function saveConfig(cfg: Config): Promise<void> {
   await writeFile(CONFIG_PATH, JSON.stringify(cfg, null, 2) + "\n");
+  configCache = null; // next loadConfig() re-reads the file we just wrote
 }
 
 export function validateDpi(value: string | number): number {

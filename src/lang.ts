@@ -2,7 +2,11 @@ import { loadConfig } from "./config";
 import { run } from "./shell";
 import { AUTO, HARDCODED_DEFAULT_LANG } from "./util";
 
-export async function listInstalledLangs(): Promise<string[]> {
+// Installed languages don't change mid-run; --lang=auto spawns this several
+// times per file, so cache the result across the process.
+let installedLangsCache: Promise<string[]> | null = null;
+
+async function fetchInstalledLangs(): Promise<string[]> {
   const res = await run(["tesseract", "--list-langs"]);
   if (res.exitCode !== 0) {
     throw new Error(`tesseract --list-langs failed: ${res.stderr.trim() || res.stdout.trim()}`);
@@ -11,6 +15,11 @@ export async function listInstalledLangs(): Promise<string[]> {
     .split("\n")
     .map(s => s.trim())
     .filter(s => s && /^[a-zA-Z0-9_]+$/.test(s) && s !== "List");
+}
+
+export async function listInstalledLangs(): Promise<string[]> {
+  if (!installedLangsCache) installedLangsCache = fetchInstalledLangs();
+  return installedLangsCache;
 }
 
 export async function validateLang(lang: string): Promise<string> {

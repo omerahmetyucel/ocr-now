@@ -1,8 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import {
-  VALID_CONFIG_KEYS, isValidKey,
+  VALID_CONFIG_KEYS, isValidKey, loadConfig,
   validateConfidence, validateDpi, validateSampleChars,
 } from "../src/config";
+
+describe("loadConfig", () => {
+  test("memoizes the parsed config across calls (same object)", async () => {
+    const a = await loadConfig();
+    const b = await loadConfig();
+    expect(a).toBe(b);
+  });
+});
 
 describe("isValidKey", () => {
   test("valid keys", () => {
