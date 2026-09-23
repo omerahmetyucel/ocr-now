@@ -47,9 +47,9 @@ function isNotFoundError(e: unknown): boolean {
   return /not found|no such file|executable file not found/i.test(msg);
 }
 
-export async function run(cmd: string[]): Promise<RunResult> {
+export async function run(cmd: string[], opts?: { stdin?: Blob }): Promise<RunResult> {
   try {
-    const proc = Bun.spawn(cmd, { stdout: "pipe", stderr: "pipe" });
+    const proc = Bun.spawn(cmd, { stdout: "pipe", stderr: "pipe", stdin: opts?.stdin });
     const [stdout, stderr] = await Promise.all([
       new Response(proc.stdout).text(),
       new Response(proc.stderr).text(),
@@ -114,7 +114,6 @@ export class PromiseQueue<T> {
 }
 
 export async function copyToClipboard(text: string): Promise<void> {
-  const proc = Bun.spawn(["pbcopy"], { stdin: new Blob([text]) });
-  const exitCode = await proc.exited;
+  const { exitCode } = await run(["pbcopy"], { stdin: new Blob([text]) });
   if (exitCode !== 0) throw new Error(`pbcopy exited with code ${exitCode}`);
 }
